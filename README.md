@@ -1,68 +1,97 @@
-<p align="center">
-  <img src="assets/architecture.png" alt="CortexHeal Architecture" width="100%">
-</p>
+# CortexHeal 
 
-# eBPF-Driven Multi-Agent Swarm Orchestration For Kubernetes Self-Healing
+CortexHeal is a deterministic detection engine and self-healing platform for AI Agents. It provides a modular, safe, and observable control plane for your autonomous systems.
 
-[![GitHub License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Kubernetes-blue.svg)](#)
-[![Tools](https://img.shields.io/badge/Stack-Prometheus%20%7C%20Grafana%20%7C%20Helm-orange.svg)](#)
+## Getting Started
 
-## <ins>Automated Multi-Tenant Cloud-Native Observability Framework</ins>
+### 1. Installation
 
-<p>This repository provides an enterprise-ready, production-grade monitoring and alerting framework designed specifically for Kubernetes (K8s) ecosystems. By leveraging the Prometheus operator model alongside Grafana's visualization layer, the framework delivers deep granular insights into cluster resource utilization, microservice health, and node-level infrastructure metrics—ensuring zero blind spots in high-volume production traffic.</p>
+Install CortexHeal using pip (along with the framework adapter of your choice):
 
----
-
-## System Architecture & Data Pipeline
-
-The framework is engineered for non-intrusive, low-overhead data aggregation across distributed containerized clusters.
-1. **Metrics Collection Layer:** Automated service discovery using Prometheus custom resource definitions (CRDs) targeting system, node, and pod-level runtimes.
-2. **Infrastructure Instrumentation:** Node Exporter and `kube-state-metrics` deployment for capturing real-time CPU/Memory saturation, network I/O spikes, and storage volume thresholds.
-3. **Storage & Time-Series Engine:** High-performance TSDB configuration optimized for chunked metrics retention, reducing storage footprints while ensuring rapid query executions.
-4. **Visualization & Insights:** Rich, pre-configured dashboard provisions feeding directly from localized Prometheus data streams.
-
----
-
-## Operational Dashboards
-
-Full-spectrum visibility into your live Kubernetes cluster state.
-
-<p align="center">
-  <img src="assets/dashboard_image.jpeg" alt="Grafana Dashboard" width="95%">
-</p>
-    
----
-
-## High-Impact Observations & Features
-
-### 1. Proactive OOM-Kill Detection
-The setup implements precise rules targeting early warnings for memory saturation patterns, preventing sudden container restarts before application downtime occurs.
-
-* **Methodology:** `container_memory_working_set_bytes` threshold evaluations.
-* **Impact:** Drastically minimizes transient 502/504 errors in routing layers.
-
-### 2. Microservice Resource Right-Sizing
-Provides historical saturation curves across namespaces to identify over-provisioned or heavily under-provisioned container limits.
-
-* **Finding:** Helps operations align CPU Request and CPU Limit ratios perfectly to avoid scheduling bottlenecks.
-
-### 3. Comprehensive Alert Routing
-Pre-configured routing configurations capable of decoupling critical hardware anomalies from standard non-blocking system warnings.
-
----
-
-## Reproduction & Deployment
-
-Professional-grade orchestration for immediate platform-wide deployment.
-
-### 1. Prerequisites
-Ensure you have access to a running Kubernetes cluster and `helm` installed locally:
 ```bash
-kubectl cluster-info
-helm version
-# Add the required helm charts
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+pip install cortexheal[langgraph]
+# OR
+pip install cortexheal[autogen]
+```
 
-helm install k8s-monitoring prometheus-community/kube-prometheus-stack
+### 2. Configuration
+
+CortexHeal uses environment variables for configuration. Create a `.env` file in your working directory:
+
+```env
+DATABASE_URL=postgresql://cortexheal:cortexpassword@localhost:5432/cortexheal_db
+CORTEXHEAL_VIEWER_TOKENS=viewer-key
+CORTEXHEAL_OPERATOR_TOKENS=operator-key
+CORTEXHEAL_ADMIN_TOKENS=admin-key
+ENVIRONMENT=development
+```
+
+### 3. Initialize the Database
+
+Make sure you have PostgreSQL running, then apply migrations:
+
+```bash
+alembic upgrade head
+```
+
+*(Note: For testing, you can also run `python init_db.py` to create tables directly.)*
+
+### 4. Integration (SDK)
+
+Integrate CortexHeal into your agent in ~5 minutes:
+
+**LangGraph Example:**
+
+```python
+from cortexheal import CortexHeal
+from cortexheal.adapters.langgraph import LangGraphAdapter
+
+# Initialize CortexHeal with the LangGraph adapter
+adapter = LangGraphAdapter(agent_id="my_agent")
+cortex = CortexHeal(adapter=adapter)
+
+# Add protection to your LangGraph StateGraph
+graph_builder.add_node("safety_gate", cortex.safety_gate)
+
+# When compiling, inject the telemetry callback
+graph = graph_builder.compile()
+graph.invoke(input_data, config={"callbacks": [cortex.telemetry]})
+```
+
+**AutoGen Example:**
+
+```python
+from cortexheal import CortexHeal
+from cortexheal.adapters.autogen import AutoGenAdapter
+from autogen import ConversableAgent
+
+# Initialize CortexHeal with the AutoGen adapter
+adapter = AutoGenAdapter(agent_id="my_agent")
+cortex = CortexHeal(adapter=adapter)
+
+agent = ConversableAgent(name="assistant", ...)
+
+# Automatically injects safety hooks and telemetry
+protected_agent = cortex.protect(agent)
+```
+
+### 5. Running the Control Plane
+
+Start the Control Plane API to monitor your agents and review incidents:
+
+```bash
+uvicorn cortexheal.server.api:app --host 0.0.0.0 --port 8000
+```
+
+Access the dashboard at `http://localhost:8000/static/index.html`.
+
+## Production Hardening (Phase 9)
+
+CortexHeal is designed for production:
+- **Connection Pooling**: PostgreSQL connections are efficiently managed.
+- **Structured Logging**: All logs are JSON-formatted for aggregation (Datadog/Splunk).
+- **Control Plane API**: Protected by Rate Limiting, RBAC, and Pagination.
+- **Real-Time UI**: Features Server-Sent Events (SSE) for instant dashboard updates.
+- **Docker Ready**: A `Dockerfile` is provided for containerized deployments.
+
+For detailed architecture, see `docs/PHASE_9_AUDIT.md`.

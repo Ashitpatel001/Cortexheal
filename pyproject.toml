@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cortexheal"
+version = "0.1.0"
+description = "Deterministic Detection Engine and Self-Healing Platform for AI Agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "CortexHeal Team", email = "team@cortexheal.dev" }
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "psycopg2-binary>=2.9.9",
+    "sqlalchemy>=2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "python-dotenv>=1.0.0",
+    "sse-starlette>=1.6.0",
+    "prometheus-client>=0.17.0"
+]
+
+[project.optional-dependencies]
+langgraph = ["langgraph>=0.0.10", "langchain-core>=0.1.0"]
+autogen = ["pyautogen>=0.2.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0"
+]
+
+[tool.setuptools.packages.find]
+include = ["cortexheal*"]

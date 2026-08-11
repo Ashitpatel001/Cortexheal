@@ -1,5 +1,10 @@
 # Secrets / environment
 .env
+venv/
+env/
+.venv/
+env.bak/
+venv.bak/
 
 # Runtime logs produced by the pipeline (not source)
 *.log
@@ -15,11 +20,27 @@ running.pids
 
 # Python caches
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build and Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
 
 # Node / frontend
 node_modules/
+package-lock.json
 
 # Local tooling / editor
 .claude/
+.vscode/
+.idea/
+*.swp
 .DS_Store
+Thumbs.db

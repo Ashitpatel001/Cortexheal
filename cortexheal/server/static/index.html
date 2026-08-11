@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CortexHeal Control Plane</title>
+    <!-- Use Tailwind CSS via CDN for rapid premium styling without node_modules -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0B0E14; color: #E2E8F0; font-family: 'Inter', sans-serif; }
+        .glass-panel { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .glow-text { text-shadow: 0 0 10px rgba(56, 189, 248, 0.5); }
+        .status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+        .status-paused { background: rgba(239, 68, 68, 0.2); color: #FCA5A5; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-running { background: rgba(34, 197, 94, 0.2); color: #86EFAC; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .status-completed { background: rgba(56, 189, 248, 0.2); color: #7DD3FC; border: 1px solid rgba(56, 189, 248, 0.3); }
+        .timeline-event { border-left: 2px solid rgba(255, 255, 255, 0.1); margin-left: 1rem; padding-left: 1.5rem; padding-bottom: 1.5rem; position: relative; }
+        .timeline-event::before { content: ''; position: absolute; width: 12px; height: 12px; border-radius: 50%; left: -7px; top: 0; background: #38BDF8; }
+        .timeline-audit::before { background: #F59E0B; }
+        .timeline-incident::before { background: #EF4444; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Navbar -->
+    <nav class="border-b border-white/10 bg-black/50 p-4 sticky top-0 z-50 glass-panel">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="text-xl font-bold tracking-wider text-sky-400 glow-text">CORTEXHEAL <span class="text-white">PROTECT</span></div>
+            <div class="space-x-4">
+                <button onclick="logout()" class="text-sm text-gray-300 hover:text-white transition">Logout</button>
+                <button onclick="loadDashboard()" class="text-sm text-gray-300 hover:text-white transition">Dashboard</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container mx-auto p-6" id="app-root">
+        <!-- Dashboard View injected here -->
+    </main>
+
+    <script>
+        const API_BASE = '/api';
+
+        function getApiKey() {
+            return localStorage.getItem('api_key');
+        }
+
+        function setApiKey(key) {
+            localStorage.setItem('api_key', key);
+            loadDashboard();
+        }
+
+        function logout() {
+            localStorage.removeItem('api_key');
+            renderLogin();
+        }
+
+        async function fetchAPI(endpoint, options = {}) {
+            const key = getApiKey();
+            if (!key) {
+                renderLogin();
+                return null;
+            }
+
+            options.headers = options.headers || {};
+            options.headers['X-API-Key'] = key;
+
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, options);
+                if (res.status === 401 || res.status === 403) {
+                    alert('Unauthorized. Please check your token.');
+                    logout();
+                    return null;
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
+            } catch (err) {
+                console.error(err);
+                alert('API Error: ' + err.message);
+                return null;
+            }
+        }
+
+        function renderLogin() {
+            const root = document.getElementById('app-root');
+            root.innerHTML = `
+                <div class="max-w-md mx-auto mt-20 glass-panel p-8 rounded-xl shadow-2xl">
+                    <h2 class="text-2xl font-bold mb-6 text-center text-sky-400">Control Plane Login</h2>
+                    <p class="text-sm text-gray-400 mb-6 text-center">Authenticate to access intervention controls.</p>
+                    <input type="password" id="api-key-input" placeholder="Enter Token..." class="w-full bg-black/50 border border-white/20 rounded p-3 text-white mb-4 outline-none focus:border-sky-500 transition">
+                    <button onclick="setApiKey(document.getElementById('api-key-input').value)" class="w-full bg-sky-600 hover:bg-sky-500 text-white rounded p-3 font-semibold transition">Authenticate</button>
+                </div>
+            `;
+        }
+
+        function formatStatus(status) {
+            let cls = 'status-badge ';
+            if (['paused', 'pause_requested'].includes(status)) cls += 'status-paused';
+            else if (['running', 'resume_requested'].includes(status)) cls += 'status-running';
+            else cls += 'status-completed';
+            return `<span class="${cls}">${status}</span>`;
+        }
+
+        async function loadDashboard() {
+            const root = document.getElementById('app-root');
+            root.innerHTML = '<div class="text-center mt-20"><div class="animate-pulse text-sky-400">Loading Control Plane...</div></div>';
+            
+            const [runs, incidents] = await Promise.all([
+                fetchAPI('/runs'),
+                fetchAPI('/incidents')
+            ]);
+
+            if (!runs || !incidents) return;
+
+            const activeIncidents = incidents.filter(i => i.status === 'OPEN' || ['paused', 'pause_requested'].includes(i.run_status));
+
+            let html = `
+                <div class="mb-8">
+                    <h1 class="text-3xl font-light mb-2">Control Plane Overview</h1>
+                    <p class="text-gray-400 text-sm">Observe agent lifecycles, investigate incidents, and enforce human-in-the-loop interventions.</p>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                    <!-- Active Incidents -->
+                    <div class="glass-panel rounded-xl p-6 shadow-2xl">
+                        <div class="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+                            <h2 class="text-xl font-semibold text-red-400">Active Interventions</h2>
+                            <span class="bg-red-500/20 text-red-300 px-3 py-1 rounded-full text-xs font-bold border border-red-500/30">${activeIncidents.length} Pending</span>
+                        </div>
+                        ${activeIncidents.length === 0 ? '<p class="text-gray-500 italic text-sm">No active interventions required.</p>' : ''}
+                        <div class="space-y-4">
+                            ${activeIncidents.map(inc => `
+                                <div class="bg-black/40 border border-white/5 rounded-lg p-4 hover:border-sky-500/30 transition cursor-pointer" onclick="loadRunDetails('${inc.run_id}')">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="font-mono text-sm text-red-300">Failure: ${inc.failure_type}</div>
+                                        ${formatStatus(inc.run_status)}
+                                    </div>
+                                    <div class="text-xs text-gray-400 mb-3 font-mono">Run: ${inc.run_id.substring(0,8)}...</div>
+                                    <div class="text-sm text-gray-300 bg-white/5 p-2 rounded">${inc.description}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Recent Runs -->
+                    <div class="glass-panel rounded-xl p-6 shadow-2xl">
+                        <div class="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+                            <h2 class="text-xl font-semibold text-sky-400">Agent Executions</h2>
+                        </div>
+                        <div class="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                            ${runs.map(run => `
+                                <div class="flex items-center justify-between bg-black/40 border border-white/5 rounded-lg p-3 hover:bg-white/5 transition cursor-pointer" onclick="loadRunDetails('${run.run_id}')">
+                                    <div>
+                                        <div class="text-sm font-medium">Agent: ${run.agent_id}</div>
+                                        <div class="text-xs font-mono text-gray-500">${run.run_id.substring(0,8)}</div>
+                                    </div>
+                                    <div class="flex items-center space-x-4">
+                                        <div class="text-xs font-mono px-2 py-1 bg-white/5 rounded ${run.protection_mode === 'ACTIVE' ? 'text-green-400' : (run.protection_mode === 'DEGRADED' ? 'text-yellow-400' : 'text-gray-500')}">
+                                            PROTECTION_${run.protection_mode}
+                                        </div>
+                                        ${formatStatus(run.status)}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            root.innerHTML = html;
+        }
+
+        async function loadRunDetails(runId) {
+            const root = document.getElementById('app-root');
+            root.innerHTML = '<div class="text-center mt-20"><div class="animate-pulse text-sky-400">Loading Run Details...</div></div>';
+            
+            const [run, timeline] = await Promise.all([
+                fetchAPI(`/runs/${runId}`),
+                fetchAPI(`/runs/${runId}/timeline`)
+            ]);
+
+            if (!run || !timeline) return;
+
+            const isPaused = ['paused', 'pause_requested'].includes(run.status);
+
+            let html = `
+                <div class="mb-6 flex items-center text-sm text-gray-400">
+                    <button onclick="loadDashboard()" class="hover:text-white">&larr; Back to Dashboard</button>
+                    <span class="mx-2">/</span>
+                    <span class="font-mono text-white">Run ${run.run_id}</span>
+                </div>
+
+                <div class="glass-panel rounded-xl p-6 shadow-2xl mb-8">
+                    <div class="flex justify-between items-start mb-6">
+                        <div>
+                            <h1 class="text-2xl font-bold mb-2">Agent: ${run.agent_id}</h1>
+                            <div class="text-sm text-gray-400 font-mono">Framework: ${run.framework}</div>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <div class="text-xs font-mono px-3 py-1.5 bg-white/5 rounded-lg border border-white/10 ${run.protection_mode === 'ACTIVE' ? 'text-green-400' : 'text-gray-500'}">
+                                PROTECTION_${run.protection_mode}
+                            </div>
+                            ${formatStatus(run.status)}
+                        </div>
+                    </div>
+                    
+                    ${isPaused ? `
+                        <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-5 mb-6 flex justify-between items-center">
+                        <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-5 mb-6">
+                            <div>
+                                <h3 class="text-red-400 font-bold mb-1">Execution Interrupted</h3>
+                                <p class="text-sm text-gray-300">The protection engine has suspended this run. Human approval is required to continue.</p>
+                            </div>
+                            
+                            ${activeIncident ? `
+                                <div class="mt-4 p-4 border border-white/20 rounded-lg bg-black/30 text-white font-mono text-sm overflow-auto">
+                                    ${JSON.stringify(activeIncident.evidence, null, 2)}
+                                </div>
+                                
+                                <div id="recovery-plan-container-${activeIncident.incident_id}" class="mt-6 p-4 border border-sky-500/30 rounded-lg bg-sky-900/10">
+                                    <h3 class="text-xl font-bold text-sky-400 mb-2">Recovery Plan</h3>
+                                    <div id="recovery-plan-content-${activeIncident.incident_id}" class="text-sm text-gray-300">Loading plan...</div>
+                                </div>
+
+                                <div class="mt-6 flex space-x-4">
+                                    <button onclick="approvePlan('${activeIncident.incident_id}')" class="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded font-semibold transition">Approve Plan</button>
+                                    <button onclick="rejectPlan('${activeIncident.incident_id}')" class="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded font-semibold transition">Reject Plan (Keep Paused)</button>
+                                    <button onclick="resumeRun('${run.run_id}')" class="bg-sky-600 hover:bg-sky-500 text-white px-6 py-2 rounded font-semibold transition">Manual Override (Resume)</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+
+                        if (item.type === 'incident') cls += 'timeline-incident';
+                        
+                        let content = '';
+                        let headerCls = 'text-sky-300';
+                        let title = 'Event';
+
+                        if (item.type === 'event') {
+                            title = item.data.event_type;
+                            content = `<div class="text-sm text-gray-400 mt-1">Tool: ${item.data.tool || 'N/A'}</div>`;
+                        } else if (item.type === 'audit') {
+                            title = `AUDIT: ${item.data.action}`;
+                            headerCls = 'text-yellow-400';
+                            content = `<div class="text-sm text-gray-300 mt-1">Actor: ${item.data.actor} | Reason: ${item.data.reason}</div>`;
+                        } else if (item.type === 'incident') {
+                            title = `INCIDENT DETECTED: ${item.data.failure_type}`;
+                            headerCls = 'text-red-400 font-bold';
+                            content = `
+                                <div class="bg-red-900/20 border border-red-500/20 rounded p-3 mt-2 text-sm">
+                                    <div class="mb-2">${item.data.description}</div>
+                                    <pre class="text-xs text-gray-400 overflow-x-auto p-2 bg-black/50 rounded">${JSON.stringify(item.data.evidence, null, 2)}</pre>
+                                </div>
+                            `;
+                        }
+
+                        return `
+                            <div class="${cls}">
+                                <div class="flex justify-between items-center mb-1">
+                                    <div class="text-sm font-semibold ${headerCls}">${title}</div>
+                                    <div class="text-xs font-mono text-gray-500">${new Date(item.timestamp).toLocaleString()}</div>
+                                </div>
+                                ${content}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+            root.innerHTML = html;
+            
+            // Load Recovery Plan
+            const plan = await fetchAPI(\`/incidents/\${incidentId}/plan\`);
+            const planDiv = document.getElementById(\`recovery-plan-content-\${incidentId}\`);
+            if (plan) {
+                let planHtml = '';
+                
+                if (plan.status === 'PLAN_STALE') {
+                    planHtml += \`<div class="mb-4 p-3 bg-red-900/40 border border-red-500/50 rounded text-red-200">
+                        <strong>Warning:</strong> This recovery plan is stale. The underlying run state has changed since it was generated. It cannot be executed.
+                    </div>\`;
+                }
+                
+                planHtml += \`<div class="mb-2"><span class="font-semibold text-white">Diagnosis:</span> \${plan.diagnosis}</div>\`;
+                
+                if (plan.ai_analysis) {
+                    planHtml += \`<div class="mb-2 mt-4 p-3 bg-purple-900/20 border border-purple-500/30 rounded">
+                        <div class="font-bold text-purple-400 mb-2">✨ AI Analysis (Confidence: \${plan.ai_analysis.confidence})</div>
+                        <div class="mb-1 text-gray-300"><span class="font-semibold text-white">Evidence:</span> \${plan.ai_analysis.evidence}</div>
+                        <div class="mb-1 text-gray-300"><span class="font-semibold text-white">Reasoning:</span> \${plan.ai_analysis.reasoning_summary}</div>
+                        <div class="mb-1 text-gray-300"><span class="font-semibold text-white">Recommended Action:</span> \${plan.ai_analysis.recommended_action}</div>
+                        <div class="text-xs text-gray-400 mt-2 italic">Limitations: \${plan.ai_analysis.limitations}</div>
+                    </div>\`;
+                }
+                
+                planHtml += \`<div class="mb-2 mt-4"><span class="font-semibold text-white">Risk Level:</span> <span class="px-2 py-1 bg-gray-800 rounded text-xs">\${plan.risk_level}</span></div>\`;
+                planHtml += \`<div class="mb-2"><span class="font-semibold text-white">Status:</span> <span class="px-2 py-1 bg-gray-800 rounded text-xs">\${plan.status}</span></div>\`;
+                
+                if (plan.verification_status) {
+                    planHtml += \`<div class="mb-2"><span class="font-semibold text-white">Verification:</span> <span class="px-2 py-1 bg-blue-900/50 text-blue-200 border border-blue-500/30 rounded text-xs">\${plan.verification_status}</span></div>\`;
+                }
+
+                planHtml += \`<div class="mt-4 font-semibold text-white">Proposed Actions:</div><ul class="list-disc pl-5">\`;
+                plan.proposed_actions.forEach(act => {
+                    planHtml += \`<li class="mt-1">\${act.action_type} - <span class="text-gray-400">\${act.reason}</span></li>\`;
+                });
+                planHtml += \`</ul>\`;
+                planDiv.innerHTML = planHtml;
+            } else {
+                planDiv.innerHTML = "No plan available.";
+            }
+        }
+
+        async function approvePlan(incidentId) {
+            if(!confirm('Approve and execute this recovery plan?')) return;
+            const res = await fetchAPI(\`/incidents/\${incidentId}/plan/approve\`, { method: 'POST' });
+            if (res) {
+                alert('Plan executed!');
+                loadDashboard();
+            }
+        }
+
+        async function rejectPlan(incidentId) {
+            if(!confirm('Reject this recovery plan? The agent will remain paused.')) return;
+            const res = await fetchAPI(\`/incidents/\${incidentId}/plan/reject\`, { method: 'POST' });
+            if (res) {
+                alert('Plan rejected.');
+                loadDashboard();
+            }
+        }
+
+        async function resumeRun(runId) {
+            if (!confirm('Are you sure you want to resume this agent execution?')) return;
+            
+            const res = await fetchAPI(`/runs/${runId}/resume`, { method: 'POST' });
+            if (res) {
+                // Reload details after small delay to let backend update state
+                setTimeout(() => loadRunDetails(runId), 500);
+            }
+        }
+
+        // Init
+        if (getApiKey()) {
+            loadDashboard();
+        } else {
+            renderLogin();
+        }
+    </script>
+</body>
+</html>
