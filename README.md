@@ -62,9 +62,11 @@ flowchart TD
 
 ## Screenshots
 
-<!-- Add dashboard production screenshots below -->
-<!-- ![Incident Queue](docs/images/incident-queue.png) -->
-<!-- ![Incident Detail & Recovery Plan](docs/images/incident-detail.png) -->
+![CortexHeal Control Plane - Incident Queue](docs/images/image-control-plane.png)
+*Figure 1: Real-time incident queue showing paused agent runs, deterministic root-cause detections, and severity classification.*
+
+![CortexHeal Web Platform](docs/images/image-dashboard.png)
+*Figure 2: CortexHeal control plane overview, interactive architecture documentation, and live operations access.*
 
 ---
 
