@@ -32,8 +32,9 @@ class CortexHealLangGraphCallback(BaseCallbackHandler):
         
     def _ensure_run_started(self, **kwargs):
         if not self.run_id:
-            metadata = kwargs.get("metadata", {})
-            self.run_id = metadata.get("thread_id", str(uuid.uuid4()))
+            metadata = kwargs.get("metadata", {}) or {}
+            configurable = kwargs.get("configurable", {}) or {}
+            self.run_id = configurable.get("thread_id") or metadata.get("thread_id") or kwargs.get("run_id") or str(uuid.uuid4())
 
     def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs: Any) -> Any:
         self._ensure_run_started(**kwargs)

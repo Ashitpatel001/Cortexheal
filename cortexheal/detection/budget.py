@@ -1,6 +1,9 @@
+import logging
 from typing import Optional, Dict
 from cortexheal.models.events import RuntimeEvent
 from cortexheal.detection.base import BaseDetector, DetectionResult
+
+logger = logging.getLogger(__name__)
 
 class BudgetConfig:
     enabled: bool = True
@@ -27,6 +30,12 @@ class BudgetDetector(BaseDetector):
             return None
             
         run_id = event.run_id
+        
+        # Defense-in-depth: ignore negative costs to prevent budget bypass
+        if event.cost < 0:
+            logger.warning(f"Negative cost {event.cost} reported for run {run_id}. Ignoring.")
+            return None
+            
         current_cost = self._cumulative.get(run_id, 0.0) + event.cost
         self._cumulative[run_id] = current_cost
         

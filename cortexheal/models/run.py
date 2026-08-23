@@ -14,4 +14,4 @@ class AgentRun(BaseModel):
     total_tokens: int = 0
     total_cost: Optional[float] = None
     failure_reason: Optional[str] = None
-    protection_mode: str = "DISABLED" # DISABLED, ACTIVE, DEGRADED
+    protection_mode: str = "ACTIVE" # ACTIVE, DISABLED, DEGRADED

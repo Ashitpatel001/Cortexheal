@@ -31,7 +31,7 @@ class RuntimeEvent(BaseModel):
     
     # Cost tracking
     tokens: Optional[TokenUsage] = None
-    cost: Optional[float] = None
+    cost: Optional[float] = Field(default=None, ge=0.0)
     
     # Performance & State
     latency_ms: Optional[int] = None

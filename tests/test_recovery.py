@@ -92,7 +92,7 @@ def test_executor_approve(mock_events, mock_get_run, mock_pc_cls, mock_pattern, 
     assert plan.status == "COMPLETED"
     
     # Verify protection controller was called
-    mock_pc.resume.assert_called_once_with("run1", actor_id="test_user", reason="test")
+    mock_pc.resume.assert_called_once_with("run1", actor_id="test_user", reason="test", incident_id="inc1")
 
 @patch('cortexheal.recovery.executor.save_recovery_plan')
 @patch('cortexheal.recovery.executor.save_audit_event')

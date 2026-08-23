@@ -69,7 +69,7 @@ class RecoveryExecutor:
                     success_count += 1
                 elif action.action_type == "RESUME":
                     # Defer to ProtectionController safely
-                    self.protection_controller.resume(plan.run_id, actor_id=user_id, reason=action.reason)
+                    self.protection_controller.resume(plan.run_id, actor_id=user_id, reason=action.reason, incident_id=plan.incident_id)
                     action.status = "COMPLETED"
                     save_recovery_action(action)
                     save_audit_event(AuditEvent(

@@ -1,9 +1,10 @@
 import os
+import time
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 import json
 import logging
 import threading
@@ -13,6 +14,8 @@ from cortexheal.models.events import RuntimeEvent
 from cortexheal.models.run import AgentRun
 from cortexheal.models.incident import Incident
 from cortexheal.models.protection import AuditEvent
+from cortexheal.models.auth import ApiKey
+from cortexheal.models.alerting import WebhookConfig, NotificationRecord
 
 logger = logging.getLogger(__name__)
 
@@ -22,26 +25,38 @@ _pool = None
 def init_pool():
     global _pool
     if _pool is None:
-        _pool = psycopg2.pool.SimpleConnectionPool(
+        max_conn = max(100, settings.DB_POOL_SIZE * 10)
+        _pool = psycopg2.pool.ThreadedConnectionPool(
             1,
-            settings.DB_POOL_SIZE,
+            max_conn,
             settings.DATABASE_URL
         )
-        logger.info(f"Initialized PostgreSQL connection pool (max={settings.DB_POOL_SIZE})")
+        logger.info(f"Initialized PostgreSQL ThreadedConnectionPool (max={max_conn})")
 
 _pool_lock = threading.Lock()
 
 @contextmanager
 def get_connection():
-    with _pool_lock:
-        if _pool is None:
-            init_pool()
-        conn = _pool.getconn()
+    conn = None
+    start_wait = time.time()
+    while conn is None:
+        with _pool_lock:
+            if _pool is None:
+                init_pool()
+            try:
+                conn = _pool.getconn()
+            except psycopg2.pool.PoolError:
+                if time.time() - start_wait > 5.0:
+                    raise
+        if conn is None:
+            time.sleep(0.01)  # Wait 10ms for connection to return to pool
+            
     try:
         yield conn
     finally:
         with _pool_lock:
-            _pool.putconn(conn)
+            if _pool and conn:
+                _pool.putconn(conn)
 
 def init_db():
     with get_connection() as conn:
@@ -63,7 +78,7 @@ def init_db():
                 )
             """)
             try:
-                cur.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS protection_mode VARCHAR(20) DEFAULT 'DISABLED'")
+                cur.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS protection_mode VARCHAR(20) DEFAULT 'ACTIVE'")
             except Exception:
                 pass 
             
@@ -209,10 +224,58 @@ def init_db():
                 )
             """)
             
-            # Indexes
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_patterns_fingerprint ON pattern_records(fingerprint)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_pattern ON recovery_outcomes(pattern_id)")
+            # API Keys table (Multi-tenant)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    key_id VARCHAR(36) PRIMARY KEY,
+                    key_hash VARCHAR(64) UNIQUE NOT NULL,
+                    key_prefix VARCHAR(32) NOT NULL,
+                    name VARCHAR(100) NOT NULL,
+                    org_id VARCHAR(100) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    last_used_at TIMESTAMP WITH TIME ZONE,
+                    revoked_at TIMESTAMP WITH TIME ZONE
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_org ON api_keys(org_id)")
             
+            # Webhook configurations table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_configs (
+                    webhook_id VARCHAR(36) PRIMARY KEY,
+                    org_id VARCHAR(100) NOT NULL,
+                    target_type VARCHAR(50) NOT NULL,
+                    url TEXT NOT NULL,
+                    enabled BOOLEAN DEFAULT TRUE,
+                    secret_token TEXT,
+                    min_severity VARCHAR(20) DEFAULT 'HIGH',
+                    escalation_timeout_minutes INTEGER DEFAULT 15,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_configs_org ON webhook_configs(org_id)")
+
+            # Notification audit records table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS notification_records (
+                    notification_id VARCHAR(36) PRIMARY KEY,
+                    org_id VARCHAR(100) NOT NULL,
+                    incident_id VARCHAR(36) NOT NULL,
+                    run_id VARCHAR(36) NOT NULL,
+                    notification_type VARCHAR(50) NOT NULL,
+                    target_url TEXT NOT NULL,
+                    payload JSONB NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    status_code INTEGER,
+                    response_body TEXT,
+                    sent_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_org ON notification_records(org_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_incident ON notification_records(incident_id)")
+
             conn.commit()
 
 def save_run(run: AgentRun):
@@ -226,12 +289,15 @@ def save_run(run: AgentRun):
                     %(run_id)s, %(agent_id)s, %(framework)s, %(model)s, %(provider)s, %(status)s,
                     %(start_time)s, %(end_time)s, %(total_tokens)s, %(total_cost)s, %(failure_reason)s, %(protection_mode)s
                 ) ON CONFLICT (run_id) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    end_time = EXCLUDED.end_time,
+                    status = CASE 
+                        WHEN runs.status IN ('pause_requested', 'paused') AND EXCLUDED.status = 'running' THEN runs.status
+                        ELSE EXCLUDED.status
+                    END,
+                    end_time = COALESCE(EXCLUDED.end_time, runs.end_time),
                     total_tokens = EXCLUDED.total_tokens,
                     total_cost = EXCLUDED.total_cost,
-                    failure_reason = EXCLUDED.failure_reason,
-                    protection_mode = EXCLUDED.protection_mode
+                    failure_reason = COALESCE(EXCLUDED.failure_reason, runs.failure_reason),
+                    protection_mode = COALESCE(EXCLUDED.protection_mode, runs.protection_mode)
             """, run.model_dump())
             conn.commit()
 
@@ -309,10 +375,16 @@ def get_run(run_id: str) -> Optional[AgentRun]:
     if row.get('end_time'): row['end_time'] = row['end_time'].isoformat()
     return AgentRun(**row)
 
-def update_run_status(run_id: str, new_status: str) -> bool:
+def update_run_status(run_id: str, new_status: str, expected_statuses: Optional[List[str]] = None) -> bool:
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE runs SET status = %s WHERE run_id = %s", (new_status, run_id))
+            if expected_statuses:
+                cur.execute(
+                    "UPDATE runs SET status = %s WHERE run_id = %s AND status = ANY(%s)", 
+                    (new_status, run_id, expected_statuses)
+                )
+            else:
+                cur.execute("UPDATE runs SET status = %s WHERE run_id = %s", (new_status, run_id))
             updated = cur.rowcount > 0
             conn.commit()
             return updated
@@ -418,7 +490,8 @@ def get_incidents() -> List[Incident]:
             
     incidents = []
     for row in rows:
-        row['triggered_at'] = row['triggered_at'].isoformat()
+        if hasattr(row.get('triggered_at'), 'isoformat'):
+            row['triggered_at'] = row['triggered_at'].isoformat()
         incidents.append(Incident(**row))
     return incidents
 
@@ -429,7 +502,8 @@ def get_incident(incident_id: str) -> Optional[Incident]:
             row = cur.fetchone()
             
     if not row: return None
-    row['triggered_at'] = row['triggered_at'].isoformat()
+    if hasattr(row.get('triggered_at'), 'isoformat'):
+        row['triggered_at'] = row['triggered_at'].isoformat()
     return Incident(**row)
 
 def get_all_runs() -> List[AgentRun]:
@@ -515,3 +589,285 @@ def get_outcomes_for_pattern(pattern_id: str) -> List[Any]:
         row['timestamp'] = row['timestamp'].isoformat()
         outcomes.append(RecoveryOutcome(**row))
     return outcomes
+
+_API_KEY_CACHE = {}  # key_hash -> (ApiKey, timestamp)
+_API_KEY_CACHE_LOCK = threading.Lock()
+_CACHE_TTL = 30.0  # seconds
+
+_LAST_USED_THROTTLE = {}  # key_id -> last_updated_time
+_LAST_USED_LOCK = threading.Lock()
+
+def save_api_key(api_key: ApiKey) -> ApiKey:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO api_keys (
+                    key_id, key_hash, key_prefix, name, org_id, role, created_at, last_used_at, revoked_at
+                ) VALUES (
+                    %(key_id)s, %(key_hash)s, %(key_prefix)s, %(name)s, %(org_id)s, %(role)s,
+                    %(created_at)s, %(last_used_at)s, %(revoked_at)s
+                ) ON CONFLICT (key_id) DO UPDATE SET
+                    last_used_at = EXCLUDED.last_used_at,
+                    revoked_at = EXCLUDED.revoked_at
+            """, api_key.model_dump())
+            conn.commit()
+    with _API_KEY_CACHE_LOCK:
+        _API_KEY_CACHE[api_key.key_hash] = (api_key, time.time())
+    return api_key
+
+def get_api_key_by_hash(key_hash: str) -> Optional[ApiKey]:
+    now = time.time()
+    with _API_KEY_CACHE_LOCK:
+        if key_hash in _API_KEY_CACHE:
+            cached_key, cached_at = _API_KEY_CACHE[key_hash]
+            if now - cached_at < _CACHE_TTL:
+                return cached_key
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM api_keys WHERE key_hash = %s", (key_hash,))
+            row = cur.fetchone()
+    if not row:
+        return None
+    api_key = ApiKey(**row)
+    with _API_KEY_CACHE_LOCK:
+        _API_KEY_CACHE[key_hash] = (api_key, now)
+    return api_key
+
+def get_api_keys_by_org(org_id: str) -> List[ApiKey]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM api_keys WHERE org_id = %s ORDER BY created_at DESC", (org_id,))
+            rows = cur.fetchall()
+    return [ApiKey(**row) for row in rows]
+
+def get_api_key_by_id_and_org(key_id: str, org_id: str) -> Optional[ApiKey]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM api_keys WHERE key_id = %s AND org_id = %s", (key_id, org_id))
+            row = cur.fetchone()
+    if not row:
+        return None
+    return ApiKey(**row)
+
+def revoke_api_key(key_id: str, org_id: str) -> bool:
+    """Revoke API key if it belongs to org_id. Returns True if revoked, False if not found."""
+    from datetime import datetime, timezone
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE api_keys 
+                SET revoked_at = %s 
+                WHERE key_id = %s AND org_id = %s AND revoked_at IS NULL
+            """, (datetime.now(timezone.utc), key_id, org_id))
+            conn.commit()
+            success = cur.rowcount > 0
+
+    with _API_KEY_CACHE_LOCK:
+        _API_KEY_CACHE.clear()
+    return success
+
+def update_api_key_last_used(key_id: str) -> None:
+    now = time.time()
+    with _LAST_USED_LOCK:
+        last_ts = _LAST_USED_THROTTLE.get(key_id, 0)
+        if now - last_ts < 5.0:  # Update DB at most once every 5 seconds per key
+            return
+        _LAST_USED_THROTTLE[key_id] = now
+        
+    from datetime import datetime, timezone
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE api_keys SET last_used_at = %s WHERE key_id = %s", (datetime.now(timezone.utc), key_id))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to update last_used_at for key {key_id}: {e}")
+
+# -----------------------------------------------------------------------------
+# Alerting & Webhook Management
+# -----------------------------------------------------------------------------
+
+def save_webhook_config(config: WebhookConfig) -> WebhookConfig:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO webhook_configs (
+                    webhook_id, org_id, target_type, url, enabled, secret_token,
+                    min_severity, escalation_timeout_minutes, created_at
+                ) VALUES (
+                    %(webhook_id)s, %(org_id)s, %(target_type)s, %(url)s, %(enabled)s, %(secret_token)s,
+                    %(min_severity)s, %(escalation_timeout_minutes)s, %(created_at)s
+                ) ON CONFLICT (webhook_id) DO UPDATE SET
+                    target_type = EXCLUDED.target_type,
+                    url = EXCLUDED.url,
+                    enabled = EXCLUDED.enabled,
+                    secret_token = EXCLUDED.secret_token,
+                    min_severity = EXCLUDED.min_severity,
+                    escalation_timeout_minutes = EXCLUDED.escalation_timeout_minutes
+            """, config.model_dump())
+            conn.commit()
+    return config
+
+def get_webhook_configs_by_org(org_id: str) -> List[WebhookConfig]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM webhook_configs WHERE org_id = %s ORDER BY created_at DESC", (org_id,))
+            rows = cur.fetchall()
+    return [WebhookConfig(**row) for row in rows]
+
+def get_active_webhook_configs_by_org(org_id: str) -> List[WebhookConfig]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM webhook_configs WHERE org_id = %s AND enabled = TRUE", (org_id,))
+            rows = cur.fetchall()
+    return [WebhookConfig(**row) for row in rows]
+
+def get_webhook_config_by_id_and_org(webhook_id: str, org_id: str) -> Optional[WebhookConfig]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM webhook_configs WHERE webhook_id = %s AND org_id = %s", (webhook_id, org_id))
+            row = cur.fetchone()
+    if not row:
+        return None
+    return WebhookConfig(**row)
+
+def delete_webhook_config(webhook_id: str, org_id: str) -> bool:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM webhook_configs WHERE webhook_id = %s AND org_id = %s", (webhook_id, org_id))
+            conn.commit()
+            return cur.rowcount > 0
+
+# -----------------------------------------------------------------------------
+# Notification History
+# -----------------------------------------------------------------------------
+
+def save_notification_record(record: NotificationRecord) -> NotificationRecord:
+    data = record.model_dump()
+    data["payload"] = Json(data["payload"])
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO notification_records (
+                        notification_id, org_id, incident_id, run_id, notification_type,
+                        target_url, payload, status, status_code, response_body, sent_at
+                    ) VALUES (
+                        %(notification_id)s, %(org_id)s, %(incident_id)s, %(run_id)s, %(notification_type)s,
+                        %(target_url)s, %(payload)s, %(status)s, %(status_code)s, %(response_body)s, %(sent_at)s
+                    )
+                """, data)
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
+    return record
+
+def get_notifications_for_incident(incident_id: str) -> List[NotificationRecord]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM notification_records WHERE incident_id = %s ORDER BY sent_at DESC", (incident_id,))
+            rows = cur.fetchall()
+    return [NotificationRecord(**row) for row in rows]
+
+def get_notifications_by_org(org_id: str, limit: int = 100) -> List[NotificationRecord]:
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM notification_records WHERE org_id = %s ORDER BY sent_at DESC LIMIT %s", (org_id, limit))
+            rows = cur.fetchall()
+    return [NotificationRecord(**row) for row in rows]
+
+# -----------------------------------------------------------------------------
+# Compliance & Audit Export Query
+# -----------------------------------------------------------------------------
+
+def get_audit_export_records(
+    org_id: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    failure_type: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    query = """
+        SELECT 
+            i.incident_id,
+            i.triggered_at,
+            i.run_id,
+            i.agent_id,
+            COALESCE(r.framework, 'unknown') AS framework,
+            r.model,
+            r.provider,
+            COALESCE(r.status, 'unknown') AS run_status,
+            COALESCE(r.protection_mode, 'ACTIVE') AS protection_mode,
+            i.failure_type,
+            i.severity,
+            i.status AS incident_status,
+            i.detector,
+            i.detector_version,
+            i.observed_value,
+            i.threshold,
+            i.description,
+            i.evidence,
+            p.plan_id,
+            p.diagnosis AS recovery_diagnosis,
+            p.proposed_actions,
+            p.status AS plan_status,
+            p.verification_status,
+            a.event_id AS audit_event_id,
+            a.timestamp AS audit_timestamp,
+            a.action AS audit_action,
+            a.actor_type AS audit_actor_type,
+            a.actor_id AS audit_actor_id,
+            a.result AS audit_result,
+            a.reason AS audit_reason,
+            a.policy_version AS audit_policy_version
+        FROM incidents i
+        LEFT JOIN runs r ON i.run_id = r.run_id
+        LEFT JOIN recovery_plans p ON i.incident_id = p.incident_id
+        LEFT JOIN audit_events a ON i.incident_id = a.incident_id
+        WHERE 1=1
+    """
+    params = []
+    if from_date:
+        query += " AND i.triggered_at >= %s"
+        params.append(from_date)
+    if to_date:
+        query += " AND i.triggered_at <= %s"
+        params.append(to_date)
+    if agent_id:
+        query += " AND i.agent_id = %s"
+        params.append(agent_id)
+    if failure_type:
+        query += " AND i.failure_type = %s"
+        params.append(failure_type)
+
+    query += " ORDER BY i.triggered_at DESC, a.timestamp ASC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, tuple(params))
+            rows = cur.fetchall()
+
+    formatted_rows = []
+    for row in rows:
+        row_dict = dict(row)
+        for ts_field in ['triggered_at', 'audit_timestamp']:
+            if hasattr(row_dict.get(ts_field), 'isoformat'):
+                row_dict[ts_field] = row_dict[ts_field].isoformat()
+        if isinstance(row_dict.get('evidence'), str):
+            try:
+                row_dict['evidence'] = json.loads(row_dict['evidence'])
+            except Exception:
+                pass
+        if isinstance(row_dict.get('proposed_actions'), str):
+            try:
+                row_dict['proposed_actions'] = json.loads(row_dict['proposed_actions'])
+            except Exception:
+                pass
+        formatted_rows.append(row_dict)
+    return formatted_rows
+
+
+
+

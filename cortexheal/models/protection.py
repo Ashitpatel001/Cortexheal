@@ -27,7 +27,8 @@ class AuditEvent(BaseModel):
         'RECOVERY_VERIFICATION',
         'AUTOMATION_EXECUTED',
         'AUTOMATION_REJECTED',
-        'CIRCUIT_BREAKER_TRIPPED'
+        'CIRCUIT_BREAKER_TRIPPED',
+        'NOTIFICATION_DISPATCHED'
     ]
     actor_type: Literal['SYSTEM', 'HUMAN'] = 'SYSTEM'
     actor_id: str = 'SYSTEM'

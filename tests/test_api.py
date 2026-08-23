@@ -132,3 +132,21 @@ def test_resume_run(mock_db):
     
     # Verify controller was called correctly with operator_user
     mock_db["controller"].resume.assert_called_once_with(run_id, actor_id="operator_user", reason="Resumed via Control Plane")
+
+
+def test_whoami_endpoint():
+    response = client.get('/api/whoami', headers={'X-API-Key': 'dev-viewer-key'})
+    assert response.status_code == 200
+    assert response.json() == {'role': 'VIEWER', 'org_id': 'default_org'}
+
+    response = client.get('/api/whoami', headers={'X-API-Key': 'dev-operator-key'})
+    assert response.status_code == 200
+    assert response.json() == {'role': 'OPERATOR', 'org_id': 'default_org'}
+
+    response = client.get('/api/whoami', headers={'X-API-Key': 'dev-admin-key'})
+    assert response.status_code == 200
+    assert response.json() == {'role': 'ADMIN', 'org_id': 'default_org'}
+
+    response = client.get('/api/whoami', headers={'X-API-Key': 'invalid-key'})
+    assert response.status_code == 403
+

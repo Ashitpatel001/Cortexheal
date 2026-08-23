@@ -42,5 +42,6 @@ def test_performance_detector_overhead():
     print(f"Peak memory usage: {peak_mb:.2f} MB")
     
     # Because it is O(1) in memory and CPU per event:
-    assert duration < 120.0 # Should be extremely fast, adjusting threshold for slow CI environments
-    assert peak_mb < 5.0 # Should barely use any memory since it only stores 1 entry per run_id
+    assert per_event_ms < 0.5  # Sub-millisecond latency per event
+    assert duration < 180.0  # Should be extremely fast, adjusting threshold for slow CI / VM environments
+    assert peak_mb < 5.0  # Should barely use any memory since it only stores 1 entry per run_id

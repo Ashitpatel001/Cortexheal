@@ -1,30 +1,24 @@
-# Secrets / environment
+# Environment & Secrets
 .env
+*.env
+!.env.example
+
+# Virtual Environments
 venv/
 env/
 .venv/
 env.bak/
 venv.bak/
 
-# Runtime logs produced by the pipeline (not source)
-*.log
-diagnoses.log
-swarm_output.log
-pipeline_output.log
-ebpf_output.log
-phase3_output.log
-phase4_output.log
-swarm_events.json
-*.pid
-running.pids
-
-# Python caches
+# Python caches and bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
+.nox/
 
 # Build and Packaging
 build/
@@ -32,15 +26,29 @@ dist/
 *.egg-info/
 .eggs/
 *.egg
+*.tsbuildinfo
 
-# Node / frontend
+# Node / Frontend / Marketing Site Bundles
 node_modules/
-package-lock.json
+frontend/node_modules/
+site/node_modules/
+frontend/dist/
+site/dist/
+.vite/
 
-# Local tooling / editor
-.claude/
-.vscode/
-.idea/
-*.swp
+# Runtime logs & test output
+*.log
+*.pid
+running.pids
+adversarial_*.json
+curl_evidence_*.py
+
+# Editor & OS files
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+.md
+!README.md

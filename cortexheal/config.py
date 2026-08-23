@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     ADMIN_TOKENS: str = "admin-key"
     OPERATOR_TOKENS: str = "operator-key"
     VIEWER_TOKENS: str = "viewer-key"
+    ALLOW_DEV_TOKENS: bool = False
     
     # Telemetry & Performance
     ENABLE_TELEMETRY: bool = True

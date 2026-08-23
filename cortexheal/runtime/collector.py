@@ -6,9 +6,13 @@ from typing import Dict, Any
 
 from cortexheal.models.events import RuntimeEvent
 from cortexheal.models.run import AgentRun
-from cortexheal.storage.postgres import save_event, save_run, get_run, get_events_for_run, save_incident
+from cortexheal.storage.postgres import (
+    save_event, save_run, get_run, get_events_for_run, save_incident,
+    get_audit_events_for_run, save_audit_event, get_recovery_plan_by_incident, save_recovery_plan
+)
 from cortexheal.detection.engine import DetectionEngine
 from cortexheal.protection.controller import ProtectionController
+from cortexheal.alerting.dispatcher import alert_dispatcher
 from cortexheal.telemetry import metrics
 from cortexheal.config import settings
 
@@ -52,12 +56,14 @@ class RuntimeCollector:
                 event = self._queue.get(timeout=1.0)
                 metrics.queue_depth.set(self._queue.qsize())
                 start_time = time.time()
-                
-                self._sync_process_event(event)
-                
-                latency = time.time() - start_time
-                metrics.ingestion_latency.observe(latency)
-                self._queue.task_done()
+                try:
+                    self._sync_process_event(event)
+                except Exception as sync_err:
+                    logger.error(f"[CortexHeal] Error processing telemetry event {getattr(event, 'event_id', 'unknown')}: {sync_err}")
+                finally:
+                    latency = time.time() - start_time
+                    metrics.ingestion_latency.observe(latency)
+                    self._queue.task_done()
             except queue.Empty:
                 continue
             except Exception as e:
@@ -77,6 +83,7 @@ class RuntimeCollector:
                     framework=event.framework,
                     model=event.model,
                     provider=event.provider,
+                    protection_mode="ACTIVE" if event.framework in ["langgraph", "autogen"] else "DISABLED"
                 )
                 save_run(run)
             
@@ -86,7 +93,6 @@ class RuntimeCollector:
                 run.end_time = event.timestamp
                 
                 # Check for RECOVERY_VERIFIED
-                from cortexheal.storage.postgres import get_audit_events_for_run, save_audit_event, get_recovery_plan_by_incident, save_recovery_plan
                 from cortexheal.models.protection import AuditEvent
                 
                 audits = get_audit_events_for_run(run.run_id)
@@ -136,6 +142,10 @@ class RuntimeCollector:
                     save_incident(incident)
                     self.protection.handle_incident(incident)
                     metrics.incidents_created_total.inc()
+                    try:
+                        alert_dispatcher.dispatch_initial_alert_async(incident)
+                    except Exception as alert_err:
+                        logger.error(f"[CortexHeal] Failed to dispatch alert for incident {incident.incident_id}: {alert_err}")
                     
             metrics.events_processed_total.inc()
                     

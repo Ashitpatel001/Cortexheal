@@ -11,6 +11,8 @@ class ProtectionPolicy:
         self.enabled = True
         self.auto_pause_failures = ["STUCK_LOOP", "BUDGET_EXCEEDED"]
 
+RESUMED_RUNS = {}
+
 class ProtectionController:
     def __init__(self, policy: ProtectionPolicy = ProtectionPolicy()):
         self.policy = policy
@@ -31,6 +33,7 @@ class ProtectionController:
         Idempotent pause request.
         """
         try:
+            RESUMED_RUNS.pop(run_id, None)
             run = get_run(run_id)
             if not run:
                 return
@@ -51,7 +54,8 @@ class ProtectionController:
                 save_audit_event(AuditEvent(run_id=run_id, incident_id=incident_id, action='PAUSE_REQUESTED', actor_type='SYSTEM', actor_id='controller', result='IDEMPOTENT', reason='Pause already active'))
                 return
                 
-            updated = update_run_status(run_id, 'pause_requested')
+            # Atomic status update
+            updated = update_run_status(run_id, 'pause_requested', expected_statuses=['running', 'resume_requested'])
             if updated:
                 save_audit_event(AuditEvent(run_id=run_id, incident_id=incident_id, action='PAUSE_REQUESTED', actor_type='SYSTEM', actor_id='controller', result='SUCCESS', reason=reason))
         except Exception as e:
@@ -63,7 +67,7 @@ class ProtectionController:
             except Exception:
                 pass
 
-    def resume(self, run_id: str, actor_id: str, reason: str = "Explicit resume requested"):
+    def resume(self, run_id: str, actor_id: str, reason: str = "Explicit resume requested", incident_id: str = None):
         """
         Explicitly requests a resume. The user must also invoke the agent framework.
         """
@@ -80,8 +84,9 @@ class ProtectionController:
                 save_audit_event(AuditEvent(run_id=run_id, action='RESUME_REQUESTED', actor_type='HUMAN', actor_id=actor_id, result='IDEMPOTENT', reason='Run is not paused'))
                 return
                 
-            updated = update_run_status(run_id, 'resume_requested')
+            updated = update_run_status(run_id, 'resume_requested', expected_statuses=['paused', 'pause_requested'])
             if updated:
-                save_audit_event(AuditEvent(run_id=run_id, action='RESUME_REQUESTED', actor_type='HUMAN', actor_id=actor_id, result='SUCCESS', reason=reason))
+                RESUMED_RUNS[run_id] = incident_id
+                save_audit_event(AuditEvent(run_id=run_id, incident_id=incident_id, action='RESUME_REQUESTED', actor_type='HUMAN', actor_id=actor_id, result='SUCCESS', reason=reason))
         except Exception as e:
             logger.error(f"Failed to resume run {run_id}: {e}")

@@ -1,215 +1,188 @@
 # CortexHeal
 
-*Deterministic Safety and Self-Healing for AI Agents*
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](pyproject.toml)
+[![Architecture](https://img.shields.io/badge/Safety_Path-Zero_LLMs_(Deterministic)-emerald.svg)](#why-cortexheal)
+[![Frameworks](https://img.shields.io/badge/Supported_Frameworks-LangGraph%20%7C%20AutoGen-orange.svg)](#quickstart)
 
-CortexHeal is a deterministic detection engine and self-healing platform for AI agents. It provides a safe, observable control plane to protect autonomous systems from execution failures, recursive tool loops, and runaway costs without relying on non-deterministic language models for critical authorization.
+> **Real-time, deterministic safety and circuit-breaker control plane for AI agents.**
 
-## Problem
+CortexHeal watches AI agent execution as it happens and automatically pauses agent threads that are provably stuck in a loop or exceeding budget ceilings—preventing runaway cloud bills and infinite tool cycles before damage occurs.
 
-AI agents frequently fail in unpredictable ways: they get stuck in infinite recursive loops repeating the same tool calls, encounter unrecoverable API failures requiring human intervention, and quickly exhaust financial budgets. Traditional recovery attempts rely entirely on the AI prompting itself to fix the problem, which often leads to unsafe, unconstrained execution or further hallucination without safe automated recovery limits.
+---
 
-## Solution
+## Why CortexHeal?
 
-CortexHeal implements a deterministic, multi-stage workflow to protect and recover agents safely:
+When AI agents run autonomously in production, they inevitably encounter unexpected edge cases:
+- **Infinite Tool Loops**: An agent repeatedly queries an empty database or malformed endpoint with identical arguments, burning compute and API limits.
+- **Runaway Token Costs**: A stuck plan or recursive sub-agent chain burns hundreds of dollars in seconds across frontier model APIs.
 
-```text
-Agent -> Observe -> Detect -> Protect -> Incident -> Analyze -> Recovery Plan -> Policy / RBAC -> Execute -> Verify -> Learn
-```
+### The Deterministic Imperative (Zero LLMs in the Safety Loop)
+Most observability tools attempt to solve agent safety by introducing a secondary **"LLM-as-a-Judge"**. This introduces three critical flaws:
+1. **Compounding Latency**: Calling an LLM at every step adds 400ms–2,500ms of latency per tool call.
+2. **Probabilistic Rulings**: An LLM judge can hallucinate, flip verdicts across identical states, or be jailbroken by the agent's own context.
+3. **Cascading Failure**: When the LLM provider experiences an outage, the safety system fails simultaneously.
+
+**CortexHeal uses 100% deterministic evaluation**:
+- **O(1) SHA-256 Canonical Fingerprinting**: Tool arguments and normalized outputs are hashed and tracked in in-memory ring buffers.
+- **Mathematical Threshold Bounds**: Strict token usage, cost accumulation, and repetition limits trip instantly without model inference.
+- **Sub-Millisecond Ingest Handover**: 0.15ms queue handover to prevent blocking agent runtime threads.
+
+---
 
 ## Architecture
 
+CortexHeal separates the **Safety Decision Path** (fast, deterministic, zero LLMs) from the **Recovery Planning Path** (diagnostic suggestions with human sign-off):
+
 ```mermaid
-graph TD
-    A[Agent Frameworks <br/> LangGraph / AutoGen] -->|Telemetry| B(Runtime Collector)
-    B --> C{Detection Engine}
-    C -->|STUCK_LOOP / BUDGET| D[Protection Controller]
-    D -->|PAUSE| A
-    C --> E[Incident System]
-    E --> F[Recovery Engine]
-    F -->|AI Advisory| G[Recovery Plan]
-    G --> H{Policy Engine & RBAC}
-    H -->|Approve/Reject| I[Recovery Executor]
-    I -->|RESUME| A
-    I --> J[Verification]
-    J --> K[Learning & Trust System]
-    
-    B --> DB[(PostgreSQL)]
-    E --> DB
-    
-    subapi[FastAPI Control Plane] --> DB
-    subapi -->|Prometheus| M[Metrics]
+flowchart TD
+    subgraph Agent Runtime
+        A[Agent Task / StateGraph] --> B[SafetyGate Node]
+        B --> C[Agent Tool / LLM Call]
+        C -->|Runtime Telemetry| D[LangGraph/AutoGen Adapter]
+    end
+
+    subgraph CortexHeal Control Plane
+        D -->|0.15ms Non-Blocking Queue| E[RuntimeCollector]
+        E --> F[Detection Engine]
+        F -->|STUCK_LOOP / BUDGET_EXCEEDED| G[Protection Controller]
+        G -->|Update Status: pause_requested| H[(PostgreSQL State)]
+        G -->|Async Dispatch| I[Alert Dispatcher]
+    end
+
+    subgraph Intervention & Observability
+        H -->|Interrupt Execution| B
+        I -->|Slack Block Kit / Webhooks| J[On-Call SRE Team]
+        H -->|Live SSE Stream| K[Operations Dashboard]
+        K -->|Human Operator Approval| L[Recovery Engine / Resumption]
+    end
 ```
 
-- **Framework adapters**: Native integrations intercepting state graphs and agents.
-- **Runtime collector**: Async bounded queue providing non-blocking telemetry ingestion.
-- **Detection engine**: Deterministic, O(1) matching for execution failures.
-- **Protection controller**: Intercepts framework execution to safely pause agents.
-- **Incident system**: State machine tracking failures and recovery status.
-- **Recovery engine**: Analyzes incidents to formulate safe recovery plans.
-- **Policy engine**: Programmatic rules engine governing safe automation.
-- **Recovery executor**: Applies approved plans to the paused agent.
-- **Verification**: Confirms if the agent actually recovered post-resume.
-- **Learning/trust system**: Adjusts confidence scores based on verified recovery outcomes.
-- **FastAPI control plane**: Secure API endpoints and real-time streaming.
-- **PostgreSQL**: Single source of truth for persistent audit trails.
-- **Prometheus metrics**: Exposes ingestion latency, queue depth, and agent run metrics.
+---
+
+## Screenshots
+
+<!-- Add dashboard production screenshots below -->
+<!-- ![Incident Queue](docs/images/incident-queue.png) -->
+<!-- ![Incident Detail & Recovery Plan](docs/images/incident-detail.png) -->
+
+---
+
+## Quickstart
+
+### 1. Start Infrastructure & Server
+```bash
+# Clone repository
+git clone https://github.com/Ashitpatel001/CortexHeal.git cortexheal
+cd cortexheal
+
+# Start PostgreSQL container
+docker compose up -d
+
+# Install Python package in editable mode
+pip install -e .
+
+# Initialize schema & seed realistic demo workloads
+python scripts/reseed_demo_data.py
+
+# Start CortexHeal Control Plane API (port 8000)
+uvicorn cortexheal.server.api:app --reload --port 8000
+```
+
+### 2. Attach SafetyGate to Your Agent (LangGraph Example)
+```python
+from cortexheal import CortexHeal
+from cortexheal.adapters.langgraph import LangGraphAdapter
+from langgraph.graph import StateGraph, END
+
+# 1. Initialize adapter and safety control plane
+adapter = LangGraphAdapter(agent_id="customer_support_agent")
+cortex = CortexHeal(adapter=adapter)
+
+# 2. Add SafetyGate node as the entry point of your StateGraph
+builder = StateGraph(AgentState)
+builder.add_node("safety_gate", cortex.safety_gate)
+builder.add_node("agent_worker", worker_node)
+
+builder.set_entry_point("safety_gate")
+builder.add_edge("safety_gate", "agent_worker")
+builder.add_edge("agent_worker", "safety_gate")
+
+graph = builder.compile()
+```
+
+For AutoGen adapter guides, see the [Full Documentation](docs/ADAPTER_ARCHITECTURE.md).
+
+---
 
 ## Key Features
 
-- Deterministic `STUCK_LOOP` and `BUDGET_EXCEEDED` detection.
-- Safe `PAUSE`/`RESUME` framework execution interception.
-- AI-assisted recovery planning securely separated from execution.
-- Policy-driven approval workflow for safe automation.
-- Role-Based Access Control (RBAC) via API tokens.
-- Server-Sent Events (SSE) for real-time dashboard monitoring.
-- High-performance, low-overhead telemetry ingestion scaling past 80,000 events/sec.
+- **Deterministic Circuit Breaking**: Automatic `STUCK_LOOP` detection (>= 4 repetitive argument/response hashes) and `BUDGET_EXCEEDED` limits ($1.00 run ceiling).
+- **Multi-Tenant Security & RBAC**: SHA-256 hashed API keys with strict `VIEWER`, `OPERATOR`, and `ADMIN` role boundaries and tenant isolation by `org_id`.
+- **Async Outbound Alerting**: Slack Block Kit alerts with automated background escalation polling for unacknowledged incidents.
+- **Compliance Audit Export**: Streaming JSON and CSV compliance export endpoints (`GET /api/audit/export`) for SOC2 / ISO 27001 audit trails.
+- **Live Event Stream**: Real-time Server-Sent Events (SSE) stream (`GET /api/stream`) for sub-second UI updates without client polling.
+- **Human-in-the-Loop Resumption**: Stalled agents safely pause in-graph and resume only after operator sign-off or validated recovery plans.
 
-## Safety Model
+---
 
-- **AI = advisory**: The AI recommends recovery steps but never authorizes them.
-- **Policy = authoritative**: Deterministic rules govern what is allowed.
-- **RBAC = authorization boundary**: Humans or strict policies authorize the Executor.
-- **Executor = constrained actions**: Applies only strictly defined interventions (PAUSE/RESUME/KILL).
-- **Verification = determines whether recovery succeeded**: Monitors telemetry post-resume to verify the fix.
+## Verified Scale Benchmarks
 
-The AI cannot simply execute arbitrary commands; it only suggests predefined, safe state mutations that must pass the programmatic policy engine before execution.
+Tested with **55 concurrent in-process LangGraph agents** running simultaneously against **55 persistent SSE streams**:
 
-## Supported Frameworks
+| Metric | Measured Value | Scope / Boundary |
+| :--- | :---: | :--- |
+| **Telemetry Queue Handover (p50)** | **0.15 ms** | Agent thread non-blocking queue push |
+| **Telemetry Queue Handover (p95)** | **0.34 ms** | Agent thread non-blocking queue push |
+| **Full Pipeline Circuit-Break (p50)** | **~26.5 ms** | Ingest &rarr; Postgres insert &rarr; Detector math &rarr; Pause update |
+| **Full Pipeline Circuit-Break (p95)** | **~94.0 ms** | 55-agent simultaneous burst under load |
+| **Full Pipeline Circuit-Break (p99)** | **~240.0 ms** | Tail connection acquisition & commit |
+| **Event Loss Rate** | **0.0%** | Zero dropped events across all concurrent runs |
 
-- **LangGraph**: Native integration capturing state graphs, tool calls, and LLM cycles.
-- **AutoGen**: Safely intercepts `ConversableAgent` execution via native hooks.
+---
 
-## Failure Detection
+## Tech Stack
 
-CortexHeal utilizes a deterministic `STUCK_LOOP` detection mechanism. It calculates cryptographic hashes of tool names, arguments, and responses. If an agent repeats the exact same tool invocation with identical parameters and results beyond a defined threshold (e.g., 5 times), the engine instantly detects a failure without relying on LLM interpretation.
+| Layer | Technologies |
+| :--- | :--- |
+| **Control Plane API** | Python 3.11, FastAPI, Pydantic v2, Uvicorn |
+| **Database & Pooling** | PostgreSQL 16, ThreadedConnectionPool (max=100), SQLAlchemy |
+| **Observability** | Prometheus Client (`/metrics`), Python Logging (Structured JSON) |
+| **Dashboard UI** | React 19, TypeScript, Vite, Tailwind CSS v4, Lucide React |
+| **Marketing & Docs** | React 19, Tailwind CSS v4, React Router 7 |
+| **Testing** | Pytest, Pytest-Asyncio, HTTPX, Puppeteer |
 
-## Recovery Lifecycle
-
-**Successful:**
-`STUCK_LOOP` -> `PAUSE` -> `APPROVAL` -> `RESUME` -> `RUN_COMPLETED` -> `RECOVERY_VERIFIED`
-
-**Failed:**
-`STUCK_LOOP` -> `PAUSE` -> `APPROVAL` -> `RESUME` -> `STUCK_LOOP` -> `RECOVERY_REPEATED_FAILURE` -> `PAUSE`
-
-## Quick Start
-
-### 1. Python Environment
-```bash
-python -m venv venv
-.\venv\Scripts\activate
-```
-
-### 2. Installation
-```bash
-pip install -e .[langgraph,autogen,dev]
-```
-
-### 3. Configuration
-```bash
-cp .env.example .env
-```
-
-### 4. PostgreSQL via Docker
-```bash
-docker compose up -d
-```
-
-### 5. Alembic Migrations
-```bash
-alembic upgrade head
-```
-
-### 6. Starting the API
-```bash
-uvicorn cortexheal.server.api:app --host 0.0.0.0 --port 8000
-```
-
-### 7. Health/Readiness Checks
-```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/readiness
-```
-
-### 8. Running the Example Agents
-```bash
-python examples/manual_healthy_run.py
-```
-
-## Examples
-
-The `examples/` directory contains verified demonstrations of the core behavior:
-- `manual_healthy_run.py`: Demonstrates an agent completing a task without issues.
-- `manual_stuck_loop.py`: Demonstrates the `STUCK_LOOP` detector intercepting and pausing a runaway agent.
-- `manual_recoverable_loop.py`: Demonstrates an agent being paused, receiving an approved recovery plan, resuming, and successfully completing its task.
-- `manual_unrecoverable_loop.py`: Demonstrates an agent being paused, resuming, and immediately failing again, triggering `RECOVERY_REPEATED_FAILURE`.
+---
 
 ## Testing
 
-Run the test suite:
+CortexHeal includes a multi-tier test suite covering unit tests, adversarial safety boundaries, concurrent scale tests, and full lifecycle end-to-end scenarios.
+
 ```bash
-python -m pytest tests -v
-```
-*(Current Result: 61 tests collected, 61 passed)*
+# Run complete test suite
+pytest tests/ -v
 
-The test suite includes complete end-to-end (E2E) validation covering the full `PAUSE`/`RESUME` lifecycle, as well as performance testing verifying the `O(1)` overhead guarantee.
+# Run 55-agent concurrent scale test
+python tests/load/run_concurrent_scale_test.py
 
-## Project Structure
-
-```text
-cortexheal/
-├── adapters/      # Framework integrations (LangGraph, AutoGen)
-├── detection/     # Deterministic STUCK_LOOP and BUDGET engines
-├── protection/    # Execution interception (PAUSE/RESUME)
-├── recovery/      # Planning, Policy, and Execution
-├── runtime/       # Async telemetry collector
-├── server/        # FastAPI Control Plane and SSE
-├── storage/       # PostgreSQL models and connection
-└── telemetry/     # Prometheus metrics
+# Run end-to-end multi-agent launch scenario
+pytest tests/e2e/test_full_launch_scenario.py -v
 ```
 
-## Configuration
-
-Configuration is handled via environment variables (see `.env.example`). Important variables include:
-- `DATABASE_URL`: PostgreSQL connection string (defaults to port 5433 for local Docker).
-- `ADMIN_TOKENS`, `OPERATOR_TOKENS`, `VIEWER_TOKENS`: Authentication keys for RBAC.
-- `MAX_QUEUE_SIZE`: Backpressure limit for the asynchronous telemetry collector.
-
-## API / Control Plane
-
-- `/health` & `/readiness`: Infrastructure and telemetry health checks.
-- `/metrics`: Prometheus metrics endpoint.
-- `/api/incidents` & `/api/runs`: Audit, pagination, and state tracking.
-- `/api/runs/{run_id}/resume`: Operator endpoint to manually authorize agent resumption.
-- `/api/stream`: Real-time Server-Sent Events (SSE) for dashboards.
-
-## Security
-
-- **Authentication**: Token-based via `X-API-Key` HTTP header.
-- **RBAC**: Enforces Viewer, Operator, and Admin roles (only Operators/Admins can approve recovery).
-- **Policy Enforcement**: Recovery plans are evaluated by a strict programmatic policy before execution.
-- **Audit Trail**: Every execution, pause, resume, and incident is permanently recorded in PostgreSQL.
-- **Safe Boundaries**: The system fails open. Database or telemetry backpressure failures will gracefully degrade without crashing the monitored agent.
-- **Secret Handling**: Keys are managed entirely via `.env` and excluded from version control.
-
-## Limitations
-
-- CortexHeal currently relies exclusively on PostgreSQL (no alternative datastores).
-- Framework integrations are strictly limited to LangGraph and AutoGen.
-- Detection algorithms currently focus strictly on `STUCK_LOOP` and `BUDGET_EXCEEDED` (no semantic drift detection).
-- Does not currently support Kubernetes, digital twins, multi-cloud deployments, or DevOps pipeline self-healing.
-
-## Future Work
-
-- Expansion to additional agent frameworks.
-- Enhanced visual dashboards utilizing the existing SSE streaming capabilities.
-- Additional deterministic detectors for specific API failure modes.
+---
 
 ## Contributing
 
-- All code must pass the 61-item test suite (`pytest tests -v`) and compile correctly (`python -m compileall cortexheal`).
-- Safety-sensitive changes to the `DetectionEngine` or `ProtectionController` require careful benchmarking to preserve fail-open and `O(1)` overhead guarantees.
-- Always run `alembic current` and `docker compose config` when adjusting schemas or infrastructure.
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/new-detector`)
+3. Commit your changes (`git commit -m 'Add custom rate limit detector'`)
+4. Push to the branch (`git push origin feature/new-detector`)
+5. Open a Pull Request
+
+---
 
 ## License
 
-MIT License
+Distributed under the **Apache 2.0 License**. See [`LICENSE`](LICENSE) for more information.
