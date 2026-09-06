@@ -38,17 +38,17 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e .[dev,langgraph]
         
-    - name: Run Tests
-      env:
-        DATABASE_URL: postgresql://cortexheal:cortexpassword@localhost:5432/cortexheal_db
-      run: |
-        pytest tests/
-        
     - name: Run Database Migrations
       env:
         DATABASE_URL: postgresql://cortexheal:cortexpassword@localhost:5432/cortexheal_db
       run: |
         alembic upgrade head
+        
+    - name: Run Tests
+      env:
+        DATABASE_URL: postgresql://cortexheal:cortexpassword@localhost:5432/cortexheal_db
+      run: |
+        pytest tests/
         
     - name: Test Package Build
       run: |
