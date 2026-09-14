@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files
 COPY pyproject.toml README.md ./
 COPY cortexheal/ ./cortexheal/
+COPY scripts/ ./scripts/
 
 # Install the application and its dependencies without editable mode
 RUN pip install --no-cache-dir .

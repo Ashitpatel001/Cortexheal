@@ -223,9 +223,22 @@ def require_admin(user: User = Depends(get_current_user)):
     return user
 
 # Hardened CORS for Production
+# Reads comma-separated origins from CORTEXHEAL_CORS_ORIGINS.
+# Falls back to localhost:3000 ONLY in non-production environments.
+_cors_raw = os.environ.get("CORTEXHEAL_CORS_ORIGINS", "")
+if _cors_raw:
+    _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+elif settings.ENVIRONMENT != "production":
+    _cors_origins = ["http://localhost:3000"]
+else:
+    _cors_origins = []  # production with no explicit origins = deny all cross-origin
+
+# Never allow wildcard "*" — strip it if someone accidentally sets it
+_cors_origins = [o for o in _cors_origins if o != "*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("CORTEXHEAL_CORS_ORIGIN", "http://localhost:3000")],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Content-Type"],
 )

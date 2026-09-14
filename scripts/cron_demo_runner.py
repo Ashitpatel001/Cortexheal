@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""
+CortexHeal Live Demo Cron Engine
+─────────────────────────────────
+Infinite-loop background worker that drives the live public marketing demo.
+Sequentially fires stuck-loop and budget-overrun scenarios so the
+public-facing dashboard always has fresh, live data for visitors.
+
+SAFETY GUARANTEES:
+  • All demo data is scoped to DEMO_ORG_ID (env var, default "demo_public").
+  • The demo runner never touches data belonging to any other org.
+  • The marketing embed should authenticate with a VIEWER-only key
+    scoped to this same org, ensuring read-only access.
+
+SUPERVISION:
+  This script is designed to run inside a container with `restart: always`.
+  Do NOT run it as a raw `python` process on a bare-metal server without
+  a process supervisor (systemd, docker-compose restart policy, etc.).
+"""
+import os
 import time
 import subprocess
 import sys
@@ -8,15 +27,19 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+DEMO_ORG_ID = os.environ.get("DEMO_ORG_ID", "demo_public")
+
 def run_scenario(script_path: str):
     logger.info(f"Starting simulated scenario: {script_path}")
     try:
-        # Run the demo script as a subprocess
+        env = os.environ.copy()
+        env["DEMO_ORG_ID"] = DEMO_ORG_ID
         result = subprocess.run(
             [sys.executable, script_path],
             capture_output=True,
             text=True,
-            timeout=300  # Max 5 minutes per scenario
+            timeout=300,  # Max 5 minutes per scenario
+            env=env
         )
         if result.returncode != 0:
             logger.error(f"Scenario {script_path} failed with exit code {result.returncode}")
@@ -29,12 +52,7 @@ def run_scenario(script_path: str):
         logger.error(f"Failed to execute {script_path}: {e}")
 
 def main():
-    """
-    Infinite loop that drives the live public marketing demo.
-    It sequentially fires the stuck loop and budget overrun scenarios to ensure
-    the public-facing dashboard always has fresh, live data for visitors.
-    """
-    logger.info("Initializing CortexHeal Live Demo Cron Engine...")
+    logger.info(f"Initializing CortexHeal Live Demo Cron Engine (org_id={DEMO_ORG_ID})...")
     
     scenarios = [
         "examples/demo_stuck_loop_with_recovery.py",
@@ -44,7 +62,7 @@ def main():
     iteration = 0
     while True:
         iteration += 1
-        logger.info(f"--- Starting Demo Iteration {iteration} ---")
+        logger.info(f"--- Starting Demo Iteration {iteration} (org_id={DEMO_ORG_ID}) ---")
         
         for scenario in scenarios:
             run_scenario(scenario)
