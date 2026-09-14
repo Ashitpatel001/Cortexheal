@@ -21,12 +21,17 @@ dependencies = [
     "uvicorn>=0.23.0",
     "python-dotenv>=1.0.0",
     "sse-starlette>=1.6.0",
-    "prometheus-client>=0.17.0"
+    "prometheus-client>=0.17.0",
+    "click>=8.0.0"
 ]
+
+[project.scripts]
+cortexheal = "cortexheal.cli.main:cli"
 
 [project.optional-dependencies]
 langgraph = ["langgraph>=0.0.10", "langchain-core>=0.1.0"]
 autogen = ["pyautogen>=0.2.0"]
+mcp = ["mcp>=1.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

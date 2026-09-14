@@ -151,10 +151,15 @@ def test_full_end_to_end_launch_scenario():
         ))
 
     collector._queue.join()
-    time.sleep(0.5)
 
-    # Step 4: Verify Circuit Breaker Trips
-    run_stuck_db = get_run(run_stuck)
+    # Step 4: Verify Circuit Breaker Trips (with retry for async worker completion under heavy load)
+    run_stuck_db = None
+    for _ in range(10):
+        run_stuck_db = get_run(run_stuck)
+        if run_stuck_db.status in ["pause_requested", "paused"]:
+            break
+        time.sleep(0.5)
+
     run_budget_db = get_run(run_budget)
     run_healthy_db = get_run(run_healthy)
 

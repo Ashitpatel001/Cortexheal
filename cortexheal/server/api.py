@@ -468,6 +468,37 @@ def api_get_runs(
         "limit": limit
     }
 
+@app.get("/api/fleet")
+def api_get_fleet(user: User = Depends(get_current_user)):
+    """Return distinct active/recent agents and their latest run."""
+    from cortexheal.storage.postgres import get_connection
+    from psycopg2.extras import RealDictCursor
+    
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                WITH RankedRuns AS (
+                    SELECT 
+                        r.run_id, r.agent_id, r.status, r.start_time, r.end_time, r.protection_mode, r.org_id,
+                        ROW_NUMBER() OVER(PARTITION BY r.agent_id ORDER BY COALESCE(r.end_time, r.start_time) DESC) as rn
+                    FROM runs r
+                    WHERE r.org_id = %s
+                )
+                SELECT 
+                    rr.run_id, rr.agent_id, rr.status, rr.start_time, rr.end_time, rr.protection_mode,
+                    (SELECT COUNT(*) FROM events e WHERE e.run_id = rr.run_id) as event_count
+                FROM RankedRuns rr
+                WHERE rr.rn = 1
+                ORDER BY COALESCE(rr.end_time, rr.start_time) DESC
+                LIMIT 100
+            """, (user.org_id,))
+            fleet_data = cur.fetchall()
+            for r in fleet_data:
+                r['start_time'] = r['start_time'].isoformat() if r['start_time'] else None
+                r['end_time'] = r['end_time'].isoformat() if r['end_time'] else None
+            return fleet_data
+
+
 @app.get("/api/runs/{run_id}")
 def api_get_run(run_id: str, user: User = Depends(get_current_user)):
     run = get_run(run_id)

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Activity, ShieldAlert, ListTree, LogOut, Download } from "lucide-react";
+import { Activity, ShieldAlert, LogOut, Download, Server, KeyRound } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useSSE } from "../sse";
 import { useAuth } from "./AuthGate";
@@ -38,14 +38,40 @@ export function Layout() {
             to="/runs"
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 px-3 py-2 transition-colors",
-                isActive ? "bg-border text-white" : "text-slate-400 hover:text-slate-200 hover:bg-border/50"
+                "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+                isActive ? "bg-accent/10 text-accent font-medium" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
               )
             }
           >
-            <ListTree className="w-5 h-5" />
-            Runs
+            <Activity className="w-5 h-5" />
+            Executions
           </NavLink>
+          <NavLink
+            to="/fleet"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+                isActive ? "bg-accent/10 text-accent font-medium" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+              )
+            }
+          >
+            <Server className="w-5 h-5" />
+            Fleet Status
+          </NavLink>
+          {sessionStorage.getItem("cortexheal_role") === "ADMIN" && (
+            <NavLink
+              to="/keys"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+                  isActive ? "bg-accent/10 text-accent font-medium" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                )
+              }
+            >
+              <KeyRound className="w-5 h-5" />
+              API Keys
+            </NavLink>
+          )}
 
           <button
             onClick={() => setIsExportOpen(true)}

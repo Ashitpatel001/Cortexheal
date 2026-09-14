@@ -5,12 +5,25 @@ import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const [key, setKey] = useState<string | null>(getApiKey());
-  const [input, setInput] = useState("");
   const queryClient = useQueryClient();
+  
+  // Check URL for auto-login token (e.g. embedded public demo)
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get('token');
+  
+  const [key, setKey] = useState<string | null>(urlToken || getApiKey());
+  const [input, setInput] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  // If URL token is provided, set it in session storage immediately
+  if (urlToken && !getApiKey()) {
+    setApiKey(urlToken);
+    // Note: We bypass the /api/whoami check here for seamless iframe loading.
+    // The backend will enforce role restrictions on subsequent API calls.
+    sessionStorage.setItem("cortexheal_role", "VIEWER");
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

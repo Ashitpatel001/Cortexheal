@@ -57,6 +57,30 @@ export function IncidentDetail() {
   const isViewer = role === 'VIEWER';
   const disableActions = isViewer || approveMutation.isPending || rejectMutation.isPending || resumeMutation.isPending;
 
+  const handleCopyContext = () => {
+    if (!incident) return;
+    const ctx = `CortexHeal Incident Context
+ID: ${incident.incident_id}
+Run ID: ${incident.run_id}
+Agent ID: ${incident.agent_id}
+Failure Type: ${incident.failure_type}
+Severity: ${incident.severity}
+Status: ${incident.status}
+
+Description:
+${incident.description}
+
+Evidence:
+${JSON.stringify(incident.evidence, null, 2)}
+
+Observed Value: ${incident.observed_value ?? 'N/A'}
+Threshold Limit: ${incident.threshold ?? 'N/A'}`;
+    
+    navigator.clipboard.writeText(ctx).then(() => {
+      alert("Incident context copied to clipboard for AI assistant.");
+    });
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
       <button 
@@ -69,7 +93,15 @@ export function IncidentDetail() {
       <div className="bg-surface border border-border p-6 shadow-lg">
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2">{incident.failure_type}</h1>
+            <div className="flex items-center gap-4 mb-2">
+              <h1 className="text-3xl font-bold text-white">{incident.failure_type}</h1>
+              <button 
+                onClick={handleCopyContext}
+                className="bg-accent/10 text-accent hover:bg-accent/20 border border-accent/30 px-3 py-1 rounded text-xs font-mono uppercase transition-colors flex items-center gap-2"
+              >
+                Copy as AI context
+              </button>
+            </div>
             <div className="text-slate-300 mb-4 max-w-2xl">{incident.description}</div>
             
             <div className="flex items-center gap-3">

@@ -61,6 +61,21 @@ export const api = {
   rejectPlan: (id: string): Promise<{status: string, message: string}> => 
     fetchWithAuth(`/api/incidents/${id}/plan/reject`, { method: 'POST' }),
     
+  getKeys: (): Promise<any[]> => fetchWithAuth(`/api/keys`),
+  
+  createKey: (name: string, role: string): Promise<any> => 
+    fetchWithAuth(`/api/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, role })
+    }),
+    
+  revokeKey: (keyId: string): Promise<{status: string}> =>
+    fetchWithAuth(`/api/keys/${keyId}/revoke`, { method: 'POST' }),
+
+  getFleet: (): Promise<any[]> => 
+    fetchWithAuth(`/api/fleet`),
+    
   getRuns: (skip = 0, limit = 50): Promise<PaginatedResponse<Run>> => 
     fetchWithAuth(`/api/runs?skip=${skip}&limit=${limit}`),
     

@@ -86,10 +86,12 @@ export function useSSE() {
       if (event === 'incident_created') {
         // Invalidate incidents list, or prepend optimistically
         queryClient.invalidateQueries({ queryKey: ['incidents'] });
+        queryClient.invalidateQueries({ queryKey: ['fleet'] });
         queryClient.invalidateQueries({ queryKey: ['timeline', String(data.run_id)] });
       } else if (event === 'run_status_changed') {
         // Refetch specifically
         queryClient.invalidateQueries({ queryKey: ['runs'] });
+        queryClient.invalidateQueries({ queryKey: ['fleet'] });
         queryClient.invalidateQueries({ queryKey: ['run', String(data.run_id)] });
         queryClient.invalidateQueries({ queryKey: ['timeline', String(data.run_id)] });
         
