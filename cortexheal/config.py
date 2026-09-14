@@ -18,9 +18,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "testing", "production"] = "development"
     
     # Authentication & Authorization
-    ADMIN_TOKENS: str = "admin-key"
-    OPERATOR_TOKENS: str = "operator-key"
-    VIEWER_TOKENS: str = "viewer-key"
+    ADMIN_TOKENS: str = "dev-admin-key"
+    OPERATOR_TOKENS: str = "dev-operator-key"
+    VIEWER_TOKENS: str = "dev-viewer-key"
     ALLOW_DEV_TOKENS: bool = False
     
     # Telemetry & Performance
@@ -46,8 +46,9 @@ class Settings(BaseSettings):
     @model_validator(mode='after')
     def check_production_secrets(self) -> 'Settings':
         if self.ENVIRONMENT == "production":
-            if self.ADMIN_TOKENS == "admin-key" or self.OPERATOR_TOKENS == "operator-key":
-                raise ValueError("Default authentication tokens cannot be used in production environment.")
+            invalid_tokens = {"admin-key", "operator-key", "viewer-key", "dev-admin-key", "dev-operator-key", "dev-viewer-key"}
+            if self.ADMIN_TOKENS in invalid_tokens or self.OPERATOR_TOKENS in invalid_tokens or self.VIEWER_TOKENS in invalid_tokens:
+                raise ValueError("Default development authentication tokens cannot be used in production environment.")
             if self.DATABASE_URL == "postgresql://cortexheal:cortexpassword@localhost:5432/cortexheal_db":
                 raise ValueError("Default database URL cannot be used in production environment.")
         return self
