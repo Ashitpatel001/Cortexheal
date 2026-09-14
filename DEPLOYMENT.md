@@ -82,3 +82,91 @@ sudo crontab -e
 ---
 
 *Phases 3â€“6 will be appended to this document as they are completed.*
+
+---
+
+## Phase 3 — Reverse Proxy & TLS (Caddy)
+
+Caddy serves as the edge router. It terminates TLS automatically and routes traffic to the local Docker containers.
+
+### Installing and Configuring Caddy
+
+Run these commands as root on the server:
+
+\\\ash
+# 1. Install Caddy (Debian/Ubuntu)
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update
+sudo apt install caddy
+
+# 2. Copy the Caddyfile to the system directory
+# IMPORTANT: Edit /opt/cortexheal/repo/deploy/Caddyfile to replace YOURDOMAIN.com first!
+sudo cp /opt/cortexheal/repo/deploy/Caddyfile /etc/caddy/Caddyfile
+
+# 3. Reload Caddy to apply changes and provision TLS certificates
+sudo systemctl reload caddy
+\\\
+
+> [!NOTE]
+> Caddy naturally supports HTTP/2 and Server-Sent Events (SSE). No explicit buffering directives are needed for /api/stream to function correctly.
+
+---
+
+## Phase 4 — Process Supervision (Docker & Systemd)
+
+The \docker-compose.prod.yml\ file defines \estart: always\ for all services (Postgres, API, and the Demo Runner). 
+The Demo Runner is fully containerized and managed by Docker, eliminating the need for raw Python processes.
+
+To ensure the entire stack survives a bare-metal server reboot, enable the Docker daemon to start on boot:
+
+\\\ash
+# Run on the server:
+sudo systemctl enable docker
+\\\
+
+
+---
+
+## Phase 6 — Deployment & Verification
+
+After completing the Prerequisites and Phase 2 host directory setup, follow these exact steps to deploy the application.
+
+### 1. Clone the Repository
+\\\ash
+cd /opt/cortexheal
+git clone https://github.com/YOUR_ORG/CortexHeal.git repo
+cd repo
+\\\
+
+### 2. Configure Production Secrets
+\\\ash
+cp .env.production.example .env.production
+nano .env.production
+\\\
+*(Fill in all CHANGE_ME_REAL_PASSWORD and YOURDOMAIN placeholders with actual secure values)*
+
+### 3. Start the Application Stack
+\\\ash
+docker compose -f docker-compose.prod.yml up -d --build
+\\\
+
+### 4. Run Database Migrations
+\\\ash
+# The API container has alembic installed. Execute the migration inside it:
+docker compose -f docker-compose.prod.yml exec api alembic upgrade head
+\\\
+
+### 5. Verify Health
+Wait 30 seconds for services to fully start, then verify the backend is healthy:
+\\\ash
+curl -f https://api.YOURDOMAIN.com/health
+\\\
+
+Verify authentication rejection (ensures API keys are required):
+\\\ash
+curl -f https://api.YOURDOMAIN.com/api/whoami
+# Should return HTTP 403 Forbidden
+\\\
+

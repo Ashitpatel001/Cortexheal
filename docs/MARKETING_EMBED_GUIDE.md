@@ -6,12 +6,13 @@ Because CortexHeal provides an interactive dashboard powered by a real-time SSE 
 
 ## 1. Hosting Requirements
 
-To run this in production, you must provision actual internet-accessible infrastructure. **Local execution cannot bind to a public domain.**
+This guide assumes you have followed `DEPLOYMENT.md` to provision CortexHeal on a **bare-metal Linux server** using Caddy for reverse proxying and TLS. 
 
-You will need:
-1. A **PostgreSQL database** (e.g., AWS RDS, Supabase, or Railway).
-2. A **Python hosting environment** for the backend API (e.g., Render, Fly.io, or Heroku).
-3. A **Static hosting provider** for the React frontend (e.g., Vercel, Netlify).
+Your environment should be serving:
+1. **Frontend App:** `https://app.YOURDOMAIN.com`
+2. **Backend API:** `https://api.YOURDOMAIN.com`
+
+*Do not use managed cloud providers (Render, Fly, etc.) for this specific deployment architecture.*
 
 ## 2. Generate a Viewer Token
 
@@ -45,10 +46,6 @@ On your marketing site (HTML, Webflow, Next.js, etc.), embed the following snipp
 
 A dashboard is only impressive if things are happening. We have included a continuous background runner that sequentially triggers the built-in demo scenarios (Stuck Loop and Budget Overrun) to feed live data into your production database.
 
-On your backend hosting environment, run this script as a continuous background worker:
+If you deployed using the bare-metal `docker-compose.prod.yml` configuration (as described in `DEPLOYMENT.md`), **this runner is already active**. It runs as a supervised, containerized background worker (`demo-runner`), ensuring visitors see a continuous stream of events if they stay on the page.
 
-```bash
-python scripts/cron_demo_runner.py
-```
-
-This script runs in an infinite loop, executing a scenario, waiting 30 seconds, running the next, and then resting for 3 minutes. Any visitor viewing the iframe on your marketing site will see incidents trigger and resolve in real-time.
+*Do not run the script manually on the server as an unsupervised process.*

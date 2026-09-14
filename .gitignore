@@ -53,3 +53,8 @@ Thumbs.db
 *.swo
 .md
 !README.md
+
+# Caddy local dev
+caddy_data/
+caddy_config/
+

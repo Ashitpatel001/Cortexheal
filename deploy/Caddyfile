@@ -1,0 +1,40 @@
+# ═══════════════════════════════════════════════════════════
+# CortexHeal — Caddy Reverse Proxy Configuration
+# ═══════════════════════════════════════════════════════════
+# Place this file at /etc/caddy/Caddyfile on the host.
+# Caddy will automatically provision Let's Encrypt TLS certs
+# as long as DNS A-records for these domains point to the server.
+#
+# Replace YOURDOMAIN.com globally before reloading Caddy!
+# ═══════════════════════════════════════════════════════════
+
+# ── Backend API & SSE ─────────────────────────────────────
+api.YOURDOMAIN.com {
+    # Proxy to the local docker-compose API container
+    reverse_proxy 127.0.0.1:8000 {
+        # Caddy automatically flushes for Server-Sent Events,
+        # no explicit unbuffering required for /api/stream.
+    }
+}
+
+# ── React Dashboard ───────────────────────────────────────
+app.YOURDOMAIN.com {
+    # If the frontend is built statically:
+    # root * /opt/cortexheal/repo/frontend/dist
+    # file_server
+    # try_files {path} /index.html
+    
+    # OR if running a Node/Vite server (adjust port as needed):
+    reverse_proxy 127.0.0.1:3000
+}
+
+# ── Marketing Site ────────────────────────────────────────
+www.YOURDOMAIN.com, YOURDOMAIN.com {
+    # If the marketing site is built statically:
+    # root * /opt/cortexheal/repo/site/dist
+    # file_server
+    # try_files {path} /index.html
+    
+    # OR if reverse proxying to a Next.js/Vite SSR container:
+    reverse_proxy 127.0.0.1:3001
+}
