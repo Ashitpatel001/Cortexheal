@@ -178,7 +178,17 @@ def main():
     for output in graph.stream(recovered_state, config=config):
         pass
 
-    update_run_status(run_id, "completed")
+    collector.ingest_event(RuntimeEvent(
+        run_id=run_id,
+        agent_id=agent_id,
+        framework="langgraph",
+        event_type="RUN_COMPLETED",
+        sequence_number=10,
+        idempotency_key=f"{run_id}_completed",
+        status="success"
+    ))
+    collector._queue.join()
+    time.sleep(0.5)
     print(f"    Run execution resumed and finished with status: COMPLETED")
 
     print("\n" + "=" * 75)

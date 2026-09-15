@@ -119,6 +119,8 @@ class RuntimeCollector:
                             if plan:
                                 plan.verification_status = "RECOVERY_VERIFIED"
                                 save_recovery_plan(plan)
+                                from cortexheal.storage.postgres import update_recovery_outcome_verification
+                                update_recovery_outcome_verification(incident_id, "VERIFIED_SUCCESS")
             elif event.event_type == 'RUN_FAILED':
                 run.status = 'failed'
                 run.end_time = event.timestamp

@@ -199,7 +199,7 @@ def init_db():
                     framework VARCHAR(50),
                     agent_id VARCHAR(255),
                     failure_type VARCHAR(50),
-                    fingerprint VARCHAR(64) UNIQUE,
+                    fingerprint VARCHAR(128) UNIQUE,
                     fingerprint_version VARCHAR(20),
                     occurrences INTEGER DEFAULT 0,
                     created_at TIMESTAMP WITH TIME ZONE,
@@ -871,3 +871,34 @@ def get_audit_export_records(
 
 
 
+
+
+def update_recovery_outcome_verification(incident_id: str, verification_result: str) -> None:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE recovery_outcomes SET verification_result = %s WHERE incident_id = %s",
+                (verification_result, incident_id)
+            )
+            conn.commit()
+
+
+def get_patterns_by_org(org_id: str) -> List[Any]:
+    from cortexheal.models.learning import PatternRecord
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT p.* 
+                FROM pattern_records p
+                JOIN runs r ON p.agent_id = r.agent_id
+                WHERE r.org_id = %s
+                ORDER BY p.updated_at DESC
+            """, (org_id,))
+            rows = cur.fetchall()
+            
+    patterns = []
+    for row in rows:
+        row["created_at"] = row["created_at"].isoformat()
+        row["updated_at"] = row["updated_at"].isoformat()
+        patterns.append(PatternRecord(**row))
+    return patterns

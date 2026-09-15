@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 from cortexheal.storage.postgres import (
+    get_patterns_by_org,
     get_incidents, get_incident, get_all_runs, get_run,
     get_events_for_run, get_audit_events_for_run, get_recovery_plan_by_incident,
     save_api_key, get_api_key_by_hash, get_api_keys_by_org, revoke_api_key, update_api_key_last_used,
@@ -27,6 +28,7 @@ from cortexheal.models.alerting import WebhookConfig, WebhookCreateRequest, Noti
 from cortexheal.alerting.dispatcher import alert_dispatcher
 from cortexheal.protection.controller import ProtectionController
 from cortexheal.recovery.engine import RecoveryEngine
+from cortexheal.learning.trust import TrustEngine
 from cortexheal.recovery.executor import RecoveryExecutor
 from cortexheal.config import settings
 from cortexheal.logger import setup_logging
@@ -602,12 +604,44 @@ def api_readiness():
 def api_get_recovery_plan(incident_id: str, user: User = Depends(get_current_user)):
     # Autogenerate or retrieve
     plan = get_recovery_plan_by_incident(incident_id)
+    incident = get_incident(incident_id)
     if not plan:
-        incident = get_incident(incident_id)
         if not incident:
             raise HTTPException(status_code=404, detail="Incident not found")
         plan = recovery_engine.generate_plan(incident)
-    return plan.model_dump()
+        
+    plan_dict = plan.model_dump()
+    if incident:
+        try:
+            from cortexheal.storage.postgres import get_events_for_run
+            from cortexheal.learning.pattern import PatternEngine
+            from cortexheal.learning.trust import TrustEngine
+            
+            events = get_events_for_run(incident.run_id)
+            trigger_event = next((e for e in events if e.event_id == incident.trigger_event_id), events[-1] if events else None)
+            if trigger_event:
+                pattern = PatternEngine().get_or_create_pattern(incident, trigger_event)
+                evidence = TrustEngine().calculate_trust(pattern.pattern_id)
+                if evidence.occurrences > 0:
+                    actions_summary = []
+                    for action, stats in evidence.actions.items():
+                        actions_summary.append({
+                            "action": action,
+                            "attempted": stats.attempted,
+                            "verified_success": stats.verified_success,
+                            "verified_failure": stats.verified_failure,
+                            "success_rate": stats.success_rate,
+                            "trust_score": stats.trust_score,
+                            "risk_level": stats.risk_level
+                        })
+                    plan_dict["pattern_trust"] = {
+                        "occurrences": evidence.occurrences,
+                        "actions": actions_summary
+                    }
+        except Exception as e:
+            pass
+            
+    return plan_dict
 
 @app.post("/api/incidents/{incident_id}/plan/approve")
 def api_approve_recovery_plan(incident_id: str, user: User = Depends(require_operator)):
@@ -691,6 +725,43 @@ async def api_stream(request: Request, run_id: str = None, user: User = Depends(
                     del SSE_CLIENTS[sub_key]
             
     return EventSourceResponse(event_generator())
+
+
+@app.get("/api/patterns")
+def get_patterns_api(user: User = Depends(verify_api_key)):
+    if user.role not in ["ADMIN", "OPERATOR", "VIEWER"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+        
+    patterns = get_patterns_by_org(user.org_id)
+    trust_engine = TrustEngine()
+    
+    results = []
+    for p in patterns:
+        evidence = trust_engine.calculate_trust(p.pattern_id)
+        actions_summary = []
+        for action, stats in evidence.actions.items():
+            actions_summary.append({
+                "action": action,
+                "attempted": stats.attempted,
+                "verified_success": stats.verified_success,
+                "verified_failure": stats.verified_failure,
+                "success_rate": stats.success_rate,
+                "trust_score": stats.trust_score,
+                "risk_level": stats.risk_level
+            })
+            
+        results.append({
+            "pattern_id": p.pattern_id,
+            "fingerprint": p.fingerprint,
+            "failure_type": p.failure_type,
+            "agent_id": p.agent_id,
+            "occurrences": p.occurrences,
+            "actions": actions_summary,
+            "updated_at": p.updated_at
+        })
+        
+    return {"data": results}
+
 
 # --- STATIC FILES ---
 # We serve the frontend directly from a static directory

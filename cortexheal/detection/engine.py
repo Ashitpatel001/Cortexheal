@@ -59,6 +59,8 @@ class DetectionEngine:
                                     if plan:
                                         plan.verification_status = "RECOVERY_REPEATED_FAILURE"
                                         save_recovery_plan(plan)
+                                        from cortexheal.storage.postgres import update_recovery_outcome_verification
+                                        update_recovery_outcome_verification(incident_id, "VERIFIED_FAILURE")
                                     ProtectionController().request_pause(event.run_id, incident_id, "Repeated failure safe posture")
                                     RESUMED_RUNS.pop(event.run_id, None)
                         continue
