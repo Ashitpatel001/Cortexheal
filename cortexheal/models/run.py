@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 class AgentRun(BaseModel):
     run_id: str
     agent_id: str
+    org_id: str = "default_org"
     framework: str
     model: Optional[str] = None
     provider: Optional[str] = None

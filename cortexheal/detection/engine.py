@@ -38,9 +38,11 @@ class DetectionEngine:
                     dedup_key = (event.run_id, result.failure_type, detector.version)
                     
                     if dedup_key in self._emitted:
-                        from cortexheal.protection.controller import RESUMED_RUNS, ProtectionController
-                        if event.run_id in RESUMED_RUNS:
-                            incident_id = RESUMED_RUNS.get(event.run_id)
+                        from cortexheal.storage.postgres import get_run
+                        run = get_run(event.run_id)
+                        # Instead of memory RESUMED_RUNS, we check if the run has a resume event recently
+                        if run:
+                            incident_id = None
                             if not incident_id:
                                 audits = get_audit_events_for_run(event.run_id)
                                 latest_resume = next((a for a in reversed(audits) if a.action in ["ACTION_EXECUTED", "RESUME_REQUESTED"] and "RESUME" in str(a.action).upper()), None)
@@ -61,8 +63,9 @@ class DetectionEngine:
                                         save_recovery_plan(plan)
                                         from cortexheal.storage.postgres import update_recovery_outcome_verification
                                         update_recovery_outcome_verification(incident_id, "VERIFIED_FAILURE")
-                                    ProtectionController().request_pause(event.run_id, incident_id, "Repeated failure safe posture")
-                                    RESUMED_RUNS.pop(event.run_id, None)
+                                        from cortexheal.protection.controller import ProtectionController
+                                        ProtectionController().request_pause(event.run_id, incident_id, "Repeated failure safe posture")
+                                        pass
                         continue
                         
                     self._emitted[dedup_key] = event.sequence_number

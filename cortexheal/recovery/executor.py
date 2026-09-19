@@ -100,7 +100,7 @@ class RecoveryExecutor:
             incident = get_incident(plan.incident_id)
             trigger_event = next((e for e in events if e.event_id == incident.trigger_event_id), events[-1] if events else None)
             if incident and trigger_event:
-                pattern = PatternEngine().get_or_create_pattern(incident, trigger_event)
+                pattern = PatternEngine().get_or_create_pattern(incident, trigger_event, get_run(plan.run_id).org_id)
                 for action in plan.proposed_actions:
                     outcome = RecoveryOutcome(
                         outcome_id=str(uuid.uuid4()),
@@ -117,7 +117,7 @@ class RecoveryExecutor:
                     )
                     save_recovery_outcome(outcome)
         except Exception as e:
-            # Learning failure must never crash core execution
+            print(f"Outcome save failed: {e}")
             pass
         
         return plan.status == "COMPLETED"
@@ -143,7 +143,7 @@ class RecoveryExecutor:
                 events = get_events_for_run(plan.run_id)
                 trigger_event = next((e for e in events if e.event_id == incident.trigger_event_id), events[-1] if events else None)
                 if incident and trigger_event:
-                    pattern = PatternEngine().get_or_create_pattern(incident, trigger_event)
+                    pattern = PatternEngine().get_or_create_pattern(incident, trigger_event, get_run(plan.run_id).org_id)
                     for action in plan.proposed_actions:
                         outcome = RecoveryOutcome(
                             outcome_id=str(uuid.uuid4()),

@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Badge, LoadingState, ErrorState } from "../components/ui";
 import { relativeTime, cn } from "../utils";
-import { AlertTriangle, PlayCircle, XCircle, ArrowLeft } from "lucide-react";
+import { AlertTriangle, PlayCircle, XCircle, ArrowLeft, Zap } from "lucide-react";
 import { useRole } from "../hooks/useRole";
 
 export function IncidentDetail() {

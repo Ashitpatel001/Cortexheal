@@ -10,8 +10,6 @@ class Config:
 class StuckLoopDetector(BaseDetector):
     def __init__(self, config: Config = Config()):
         self.config = config
-        # State: run_id -> {"signature": tuple, "count": int}
-        self._state: Dict[str, Dict[str, Any]] = {}
 
     @property
     def name(self) -> str:
@@ -31,20 +29,28 @@ class StuckLoopDetector(BaseDetector):
         if not event.tool or event.tool in self.config.ignored_tools:
             return None
             
-        run_id = event.run_id
         target_signature = (event.tool, event.arguments_hash, event.response_hash)
         
-        # Initialize or update state
-        run_state = self._state.get(run_id, {"signature": None, "count": 0})
+        # Postgres-backed state: fetch the last N-1 tool call completions for this run
+        from cortexheal.storage.postgres import get_connection
+        from psycopg2.extras import RealDictCursor
         
-        if run_state["signature"] == target_signature:
-            run_state["count"] += 1
-        else:
-            run_state["signature"] = target_signature
-            run_state["count"] = 1
-            
-        self._state[run_id] = run_state
-        consecutive_count = run_state["count"]
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT tool, arguments_hash, response_hash FROM events "
+                    "WHERE run_id = %s AND event_type = %s "
+                    "ORDER BY sequence_number DESC LIMIT %s",
+                    (event.run_id, 'TOOL_CALL_COMPLETED', self.config.repetition_threshold - 1)
+                )
+                rows = cur.fetchall()
+                
+        consecutive_count = 1
+        for row in rows:
+            if (row["tool"], row["arguments_hash"], row["response_hash"]) == target_signature:
+                consecutive_count += 1
+            else:
+                break
                 
         if consecutive_count >= self.config.repetition_threshold:
             return DetectionResult(

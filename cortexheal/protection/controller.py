@@ -71,7 +71,14 @@ class ProtectionController:
         """
         Explicitly requests a resume. The user must also invoke the agent framework.
         """
+        if incident_id is None:
+            from cortexheal.storage.postgres import get_incidents
+            incidents = [i for i in get_incidents() if i.run_id == run_id and i.status == "OPEN"]
+            if incidents:
+                incident_id = incidents[0].incident_id
+
         try:
+            RESUMED_RUNS.pop(run_id, None)
             run = get_run(run_id)
             if not run:
                 return

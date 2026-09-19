@@ -2,6 +2,7 @@ import logging
 import threading
 import queue
 import time
+import os
 from typing import Dict, Any
 
 from cortexheal.models.events import RuntimeEvent
@@ -73,6 +74,8 @@ class RuntimeCollector:
         """
         Synchronously saves the event to the DB and evaluates detection logic.
         """
+        import time
+        _t0 = time.perf_counter()
         try:
             # 1. Ensure run exists
             run = get_run(event.run_id)
@@ -80,6 +83,7 @@ class RuntimeCollector:
                 run = AgentRun(
                     run_id=event.run_id,
                     agent_id=event.agent_id,
+                    org_id=os.environ.get("CORTEXHEAL_ORG_ID", "default_org"),
                     framework=event.framework,
                     model=event.model,
                     provider=event.provider,
@@ -135,11 +139,16 @@ class RuntimeCollector:
             
             # 3. Save event
             # Deduplication handled via DB unique constraint on idempotency_key
+            _t_save_start = time.perf_counter()
             saved = save_event(event)
+            _t_save_dur = time.perf_counter() - _t_save_start
             
             # 4. Evaluate Detection Engine & Protection
+            _t_eval_dur = 0.0
             if saved:
+                _t_eval_start = time.perf_counter()
                 incidents = self.engine.evaluate(event)
+                _t_eval_dur = time.perf_counter() - _t_eval_start
                 for incident in incidents:
                     save_incident(incident)
                     self.protection.handle_incident(incident)

@@ -25,7 +25,7 @@ def dummy_tool_node(state: AgentState):
         return {"count": count, "output": "Done"}
         
     print(f"Executing deterministic failing tool (Iteration {count})")
-    
+        
     # UNRECOVERABLE: Even if resumed, it does the exact same failing thing!
     event = RuntimeEvent(
         run_id=run_id,
@@ -78,11 +78,17 @@ try:
 except Exception as e:
     print(f"Execution interrupted: {e}")
 
+# Wait for collector to create incident
+collector._queue.join()
+import time
+time.sleep(0.5)
+
+
 # Simulate Operator Approval of Recovery Plan
 import urllib.request, json
 
 req = urllib.request.Request('http://127.0.0.1:8000/api/incidents')
-req.add_header('X-API-Key', 'dev-operator-key')
+req.add_header('X-API-Key', 'dev-admin-key')
 try:
     resp = urllib.request.urlopen(req)
     incidents = json.loads(resp.read())['data']
@@ -93,13 +99,22 @@ try:
         
         # 1. Generate plan so that it exists in the DB
         req2 = urllib.request.Request(f'http://127.0.0.1:8000/api/incidents/{incident_id}/plan')
-        req2.add_header('X-API-Key', 'dev-operator-key')
+        req2.add_header('X-API-Key', 'dev-admin-key')
         urllib.request.urlopen(req2)
+        
+        # 2. Execute plan so outcome is recorded
+        req3 = urllib.request.Request(f"http://127.0.0.1:8000/api/incidents/{incident_id}/plan/approve", method="POST")
+        req3.add_header("X-API-Key", "dev-admin-key")
+        try:
+            urllib.request.urlopen(req3)
+            print("Plan Executed via API.")
+        except urllib.error.HTTPError as e:
+            print(f"Failed to execute plan: {e.read()}")
         
         # Call the direct resume API
         print(f"Resuming run {run_id} directly...")
         req4 = urllib.request.Request(f'http://127.0.0.1:8000/api/runs/{run_id}/resume', method='POST')
-        req4.add_header('X-API-Key', 'dev-operator-key')
+        req4.add_header('X-API-Key', 'dev-admin-key')
         urllib.request.urlopen(req4)
         print("Run resumed via API! Re-invoking graph...")
         

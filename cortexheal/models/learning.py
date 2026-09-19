@@ -8,6 +8,7 @@ class FailureFingerprint(BaseModel):
     version: str = "1.0"
     framework: str
     agent_id: str
+    org_id: str
     failure_type: str
     tool_name: Optional[str] = None
 
@@ -15,6 +16,7 @@ class PatternRecord(BaseModel):
     pattern_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     framework: str
     agent_id: str
+    org_id: str
     failure_type: str
     fingerprint: str
     fingerprint_version: str

@@ -72,7 +72,7 @@ class RecoveryEngine:
         if trigger_event:
             try:
                 # 1. Fingerprint and Pattern
-                pattern = self.pattern_engine.get_or_create_pattern(incident, trigger_event)
+                pattern = self.pattern_engine.get_or_create_pattern(incident, trigger_event, run.org_id)
                 # 2. Ranking and Trust
                 recommendations = self.ranking_engine.rank_actions(pattern)
                 

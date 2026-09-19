@@ -116,7 +116,8 @@ sudo systemctl reload caddy
 
 ## Phase 4 — Process Supervision (Docker & Systemd)
 
-The \docker-compose.prod.yml\ file defines \estart: always\ for all services (Postgres, API, and the Demo Runner). 
+The \docker-compose.prod.yml\ file defines \
+estart: always\ for all services (Postgres, API, and the Demo Runner). 
 The Demo Runner is fully containerized and managed by Docker, eliminating the need for raw Python processes.
 
 To ensure the entire stack survives a bare-metal server reboot, enable the Docker daemon to start on boot:
@@ -169,4 +170,5 @@ Verify authentication rejection (ensures API keys are required):
 curl -f https://api.YOURDOMAIN.com/api/whoami
 # Should return HTTP 403 Forbidden
 \\\
+
 

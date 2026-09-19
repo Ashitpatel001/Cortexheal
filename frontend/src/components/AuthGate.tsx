@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { getApiKey, setApiKey } from "../api";
 import { useQueryClient } from "@tanstack/react-query";
-import { KeyRound } from "lucide-react";
+import { KeyRound, PlayCircle } from "lucide-react";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -25,9 +25,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
     sessionStorage.setItem("cortexheal_role", "VIEWER");
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const token = input.trim();
+  const handleDemoLogin = () => {
+    const demoKey = "ctx_viewer_public_demo_key_12345";
+    setInput(demoKey);
+    // Auto-submit immediately
+    executeLogin(demoKey);
+  };
+
+  const executeLogin = async (token: string) => {
     if (!token) return;
     
     setLoading(true);
@@ -49,6 +54,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    executeLogin(input.trim());
+  };
+
   const handleLogout = () => {
     sessionStorage.removeItem("cortexheal_api_key");
     sessionStorage.removeItem("cortexheal_role");
@@ -58,8 +68,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (!key) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-surface border border-border p-8 text-slate-200 shadow-xl">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div className="max-w-md w-full bg-surface border border-border p-8 text-slate-200 shadow-xl mb-4">
           <div className="flex items-center gap-3 mb-6">
             <KeyRound className="w-8 h-8 text-accent" />
             <h1 className="text-2xl font-sans font-semibold text-white">CortexHeal Ops</h1>
@@ -92,6 +102,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
               </div>
             )}
           </form>
+        </div>
+        
+        {/* Public Demo Entry Point */}
+        <div className="max-w-md w-full text-center">
+          <p className="text-sm text-slate-400 mb-2">Want to see CortexHeal in action?</p>
+          <button 
+            onClick={handleDemoLogin}
+            disabled={loading}
+            className="text-accent hover:text-white transition-colors text-sm font-medium flex items-center justify-center gap-2 mx-auto"
+          >
+            <PlayCircle className="w-4 h-4" />
+            View Live Public Demo
+          </button>
         </div>
       </div>
     );

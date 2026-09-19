@@ -27,7 +27,7 @@ def init_pool():
     if _pool is None:
         max_conn = max(100, settings.DB_POOL_SIZE * 10)
         _pool = psycopg2.pool.ThreadedConnectionPool(
-            1,
+            10,
             max_conn,
             settings.DATABASE_URL
         )
@@ -37,26 +37,26 @@ _pool_lock = threading.Lock()
 
 @contextmanager
 def get_connection():
-    conn = None
-    start_wait = time.time()
-    while conn is None:
+    if _pool is None:
         with _pool_lock:
             if _pool is None:
                 init_pool()
-            try:
-                conn = _pool.getconn()
-            except psycopg2.pool.PoolError:
-                if time.time() - start_wait > 5.0:
-                    raise
-        if conn is None:
+                
+    conn = None
+    start_wait = time.time()
+    while conn is None:
+        try:
+            conn = _pool.getconn()
+        except psycopg2.pool.PoolError:
+            if time.time() - start_wait > 5.0:
+                raise
             time.sleep(0.01)  # Wait 10ms for connection to return to pool
             
     try:
         yield conn
     finally:
-        with _pool_lock:
-            if _pool and conn:
-                _pool.putconn(conn)
+        if _pool and conn:
+            _pool.putconn(conn)
 
 def init_db():
     with get_connection() as conn:
@@ -199,7 +199,9 @@ def init_db():
                     framework VARCHAR(50),
                     agent_id VARCHAR(255),
                     failure_type VARCHAR(50),
-                    fingerprint VARCHAR(128) UNIQUE,
+                    org_id VARCHAR(36) NOT NULL,
+                    fingerprint VARCHAR(128),
+                    UNIQUE(org_id, fingerprint),
                     fingerprint_version VARCHAR(20),
                     occurrences INTEGER DEFAULT 0,
                     created_at TIMESTAMP WITH TIME ZONE,
@@ -283,10 +285,10 @@ def save_run(run: AgentRun):
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO runs (
-                    run_id, agent_id, framework, model, provider, status, 
+                    run_id, agent_id, org_id, framework, model, provider, status, 
                     start_time, end_time, total_tokens, total_cost, failure_reason, protection_mode
                 ) VALUES (
-                    %(run_id)s, %(agent_id)s, %(framework)s, %(model)s, %(provider)s, %(status)s,
+                    %(run_id)s, %(agent_id)s, %(org_id)s, %(framework)s, %(model)s, %(provider)s, %(status)s,
                     %(start_time)s, %(end_time)s, %(total_tokens)s, %(total_cost)s, %(failure_reason)s, %(protection_mode)s
                 ) ON CONFLICT (run_id) DO UPDATE SET
                     status = CASE 
@@ -482,10 +484,18 @@ def get_events_for_run(run_id: str) -> List[RuntimeEvent]:
         events.append(RuntimeEvent(**row))
     return events
 
-def get_incidents() -> List[Incident]:
+def get_incidents(org_id: Optional[str] = None) -> List[Incident]:
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM incidents ORDER BY triggered_at DESC")
+            if org_id:
+                cur.execute("""
+                    SELECT i.* FROM incidents i 
+                    JOIN runs r ON i.run_id = r.run_id 
+                    WHERE r.org_id = %s 
+                    ORDER BY i.triggered_at DESC
+                """, (org_id,))
+            else:
+                cur.execute("SELECT * FROM incidents ORDER BY triggered_at DESC")
             rows = cur.fetchall()
             
     incidents = []
@@ -506,10 +516,13 @@ def get_incident(incident_id: str) -> Optional[Incident]:
         row['triggered_at'] = row['triggered_at'].isoformat()
     return Incident(**row)
 
-def get_all_runs() -> List[AgentRun]:
+def get_all_runs(org_id: Optional[str] = None) -> List[AgentRun]:
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM runs ORDER BY start_time DESC")
+            if org_id:
+                cur.execute("SELECT * FROM runs WHERE org_id = %s ORDER BY start_time DESC", (org_id,))
+            else:
+                cur.execute("SELECT * FROM runs ORDER BY start_time DESC")
             rows = cur.fetchall()
             
     runs = []
@@ -537,24 +550,24 @@ def save_pattern_record(pattern: Any) -> None:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO pattern_records (
-                    pattern_id, framework, agent_id, failure_type, fingerprint, 
+                    pattern_id, framework, agent_id, org_id, failure_type, fingerprint, 
                     fingerprint_version, occurrences, created_at, updated_at, is_promotion_candidate
                 ) VALUES (
-                    %(pattern_id)s, %(framework)s, %(agent_id)s, %(failure_type)s, %(fingerprint)s,
+                    %(pattern_id)s, %(framework)s, %(agent_id)s, %(org_id)s, %(failure_type)s, %(fingerprint)s,
                     %(fingerprint_version)s, %(occurrences)s, %(created_at)s, %(updated_at)s, %(is_promotion_candidate)s
                 )
-                ON CONFLICT (fingerprint) DO UPDATE SET 
+                ON CONFLICT (org_id, fingerprint) DO UPDATE SET 
                     occurrences = EXCLUDED.occurrences,
                     updated_at = EXCLUDED.updated_at,
                     is_promotion_candidate = EXCLUDED.is_promotion_candidate
             """, data)
             conn.commit()
 
-def get_pattern_by_fingerprint(fingerprint: str) -> Optional[Any]:
+def get_pattern_by_fingerprint(org_id: str, fingerprint: str) -> Optional[Any]:
     from cortexheal.models.learning import PatternRecord
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM pattern_records WHERE fingerprint = %s", (fingerprint,))
+            cur.execute("SELECT * FROM pattern_records WHERE org_id = %s AND fingerprint = %s", (org_id, fingerprint))
             row = cur.fetchone()
             
     if not row: return None
@@ -887,13 +900,7 @@ def get_patterns_by_org(org_id: str) -> List[Any]:
     from cortexheal.models.learning import PatternRecord
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT DISTINCT p.* 
-                FROM pattern_records p
-                JOIN runs r ON p.agent_id = r.agent_id
-                WHERE r.org_id = %s
-                ORDER BY p.updated_at DESC
-            """, (org_id,))
+            cur.execute("SELECT * FROM pattern_records WHERE org_id = %s ORDER BY updated_at DESC", (org_id,))
             rows = cur.fetchall()
             
     patterns = []

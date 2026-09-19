@@ -128,7 +128,7 @@ def run_single_langgraph_agent(agent_index: int, collector: RuntimeCollector, fa
             )
             collector.ingest_event(event)
             latencies.append(time.perf_counter() - e_start)
-            time.sleep(0.01)
+            time.sleep(0.3)
 
         elif failure_mode == "BUDGET_EXCEEDED":
             # Emit high-cost tool call
@@ -146,7 +146,7 @@ def run_single_langgraph_agent(agent_index: int, collector: RuntimeCollector, fa
             )
             collector.ingest_event(event)
             latencies.append(time.perf_counter() - e_start)
-            time.sleep(0.01)
+            time.sleep(0.3)
 
         return {
             "iteration": iter_num,
@@ -155,7 +155,7 @@ def run_single_langgraph_agent(agent_index: int, collector: RuntimeCollector, fa
         }
 
     def should_continue(state: WorkerState):
-        if state.get("iteration", 0) >= 10:
+        if state.get("iteration", 0) >= 50:
             return END
         return "safety_gate"
 
@@ -174,8 +174,11 @@ def run_single_langgraph_agent(agent_index: int, collector: RuntimeCollector, fa
     start_exec = time.perf_counter()
     try:
         for output in graph.stream({"iteration": 0, "data": "init", "is_paused": False}, config=config):
+            if "__interrupt__" in output:
+                interrupted = True
+                interrupt_reason = "SafetyGate interrupted the stream"
             # Yield to allow collector queue processing
-            time.sleep(0.02)
+            time.sleep(0.2)
     except Exception as e:
         interrupted = True
         interrupt_reason = str(e)
@@ -259,8 +262,8 @@ async def main():
     # Drain telemetry queue
     collector._queue.join()
     
-    # Give 1.5s for SafetyGate loop cycles & DB commits
-    await asyncio.sleep(1.5)
+    # Give 3.5s for SafetyGate loop cycles, DB commits, and SSE DB poller (2s interval)
+    await asyncio.sleep(3.5)
     
     total_load_duration = time.perf_counter() - start_load_test
     print(f"         All {CONCURRENT_AGENTS} LangGraph Agents Finished Execution in {total_load_duration:.2f}s.")

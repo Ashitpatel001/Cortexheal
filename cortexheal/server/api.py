@@ -439,7 +439,7 @@ def api_get_incidents(
     limit: int = Query(50, ge=1, le=100),
     user: User = Depends(get_current_user)
 ):
-    incidents = get_incidents()
+    incidents = get_incidents(org_id=user.org_id)
     paginated = incidents[skip : skip + limit]
     
     # Enrich with run status
@@ -475,7 +475,7 @@ def api_get_runs(
     limit: int = Query(50, ge=1, le=100),
     user: User = Depends(get_current_user)
 ):
-    runs = get_all_runs()
+    runs = get_all_runs(org_id=user.org_id)
     return {
         "data": runs[skip : skip + limit],
         "total": len(runs),
@@ -613,14 +613,15 @@ def api_get_recovery_plan(incident_id: str, user: User = Depends(get_current_use
     plan_dict = plan.model_dump()
     if incident:
         try:
-            from cortexheal.storage.postgres import get_events_for_run
+            from cortexheal.storage.postgres import get_events_for_run, get_run
             from cortexheal.learning.pattern import PatternEngine
             from cortexheal.learning.trust import TrustEngine
             
             events = get_events_for_run(incident.run_id)
+            incident_run = get_run(incident.run_id)
             trigger_event = next((e for e in events if e.event_id == incident.trigger_event_id), events[-1] if events else None)
             if trigger_event:
-                pattern = PatternEngine().get_or_create_pattern(incident, trigger_event)
+                pattern = PatternEngine().get_or_create_pattern(incident, trigger_event, incident_run.org_id)
                 evidence = TrustEngine().calculate_trust(pattern.pattern_id)
                 if evidence.occurrences > 0:
                     actions_summary = []
@@ -728,7 +729,7 @@ async def api_stream(request: Request, run_id: str = None, user: User = Depends(
 
 
 @app.get("/api/patterns")
-def get_patterns_api(user: User = Depends(verify_api_key)):
+def get_patterns_api(user: User = Depends(get_current_user)):
     if user.role not in ["ADMIN", "OPERATOR", "VIEWER"]:
         raise HTTPException(status_code=403, detail="Forbidden")
         

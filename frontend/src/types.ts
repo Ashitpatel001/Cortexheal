@@ -37,6 +37,7 @@ export interface RecoveryPlan {
   planner_type: string;
   verification_status: string;
   snapshot_run_status: string;
+  pattern_trust?: any;
   snapshot_sequence_number: number;
   created_at: string;
 }
